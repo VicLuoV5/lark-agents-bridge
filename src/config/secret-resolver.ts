@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { getSecret } from './keystore';
 import { paths } from './paths';
 import type { AppConfig, ProviderConfig, SecretInput, SecretRef } from './schema';
-import { isSecretRef, secretKeyForApp } from './schema';
+import { getAgentApiKeyRef, isSecretRef, secretKeyForApp } from './schema';
 
 /**
  * Bridge runtime secret resolver. Mirrors the openclaw / lark-cli
@@ -34,6 +34,17 @@ export async function resolveAppSecret(cfg: AppConfig): Promise<string> {
   const appId = cfg.accounts.app.id;
   const secret = cfg.accounts.app.secret;
   return resolveSecretInput(secret, cfg.secrets, appId);
+}
+
+/**
+ * Resolve the agent provider API key (preferences.agent.apiKey, if set).
+ * Returns undefined when unconfigured — the adapter then relies on the
+ * user's own login. Resolution errors propagate (config problem).
+ */
+export async function resolveAgentSecret(cfg: AppConfig): Promise<string | undefined> {
+  const ref = cfg.preferences?.agent?.apiKey;
+  if (!ref) return undefined;
+  return resolveSecretInput(ref, cfg.secrets, cfg.accounts.app.id);
 }
 
 async function resolveSecretInput(

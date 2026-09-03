@@ -14,15 +14,26 @@
 
 ## 功能
 
-- 把飞书 / Lark 消息发送给本机 `codex exec`。
-- 每个 chat 或话题维护独立 Codex session。
+- 把飞书 / Lark 消息发送给本机 agent CLI（默认 Codex，也支持 Claude Code）。
+- 每个 chat 或话题维护独立 agent session。
 - 支持轻量流式 markdown 卡片，也支持跑完后一次性发文本。
 - `/new [name]` 创建新群、新会话，并继承当前工作目录。
 - `/reset` 清空当前 chat 会话。
 - `/cd` 和 `/ws` 切换、保存工作空间。
-- 下载聊天里的图片和文件，把本地路径交给 Codex。
-- `/config` 配置访问控制、回复模式、并发、run 探活和 Codex reasoning effort。
+- 下载聊天里的图片和文件，把本地路径交给 agent。
+- `/config` 配置访问控制、回复模式、并发、run 探活和 agent 推理强度。
 - 支持前台运行，也支持 OS 托管后台运行。
+
+## Agent 与模型供应商
+
+bridge 会 spawn 一个本地 agent CLI，由 `config.json` 里的 `preferences.agent.type`（或首跑向导）选择：
+
+| Agent | 调用方式 | 模型来源 |
+|---|---|---|
+| `codex`（默认） | `codex exec --json` | 你的 Codex 登录态。 |
+| `claude` | `claude -p --output-format stream-json` | 你的 Claude Code 登录；或经 `/config` 指向 Anthropic 兼容端点（DeepSeek、智谱 GLM、Kimi、Qwen 百炼、火山方舟/豆包、MiniMax）。 |
+
+供应商 API Key 保存在本机加密 keystore（`secrets.enc`），不进 config.json、不进日志。各家端点和模型 id 迭代很快，内置 profile 只作默认值，供应商改名时用 `/config` 覆盖模型 id 即可。
 
 ## 前置条件
 

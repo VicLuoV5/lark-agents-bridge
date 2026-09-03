@@ -14,15 +14,26 @@ It does not require an OpenAI API key or a Claude API key. Codex runs through yo
 
 ## Features
 
-- Send Feishu / Lark messages to local `codex exec`.
-- Keep separate Codex sessions per chat or topic.
+- Send Feishu / Lark messages to a local agent CLI (Codex by default, Claude Code also supported).
+- Keep separate agent sessions per chat or topic.
 - Stream replies as lightweight markdown cards or send one final text reply.
 - Use `/new [name]` to create a new group chat and inherit the current workspace.
 - Use `/reset` to clear the current chat session.
 - Switch and save workspaces with `/cd` and `/ws`.
-- Download images and files from chat and pass their local paths to Codex.
-- Configure access control, reply mode, concurrency, run idle timeout, and Codex reasoning effort from `/config`.
+- Download images and files from chat and pass their local paths to the agent.
+- Configure access control, reply mode, concurrency, run idle timeout, and agent reasoning effort from `/config`.
 - Run in the foreground or as an OS-managed background process.
+
+## Agents
+
+The bridge spawns a local agent CLI; `preferences.agent.type` in `config.json` (or the first-run wizard) picks which:
+
+| Agent | Invocation | Model access |
+|---|---|---|
+| `codex` (default) | `codex exec --json` | Your Codex login. |
+| `claude` | `claude -p --output-format stream-json` | Your Claude Code login, or an Anthropic-compatible provider endpoint (DeepSeek, 智谱 GLM, Kimi, Qwen 百炼, 火山方舟/豆包, MiniMax) selected via `/config`. |
+
+Provider API keys are stored in the encrypted local keystore (`secrets.enc`), never in `config.json` or logs. Provider endpoints/models move quickly — treat the built-in profiles as defaults and override the model id via `/config` when a vendor renames things.
 
 ## Requirements
 

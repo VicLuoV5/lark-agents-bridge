@@ -92,8 +92,19 @@ export type CodexPermissionMode = AgentPermissionMode;
 export interface AgentConfig {
   /** Adapter id from src/agent/registry. Default 'codex'. */
   type?: string;
+  /**
+   * Model provider profile id (claude adapter: 'anthropic' = own login,
+   * or a vendor id from src/agent/providers). Other adapters ignore it.
+   */
+  provider?: string;
   /** Model override handed to the adapter, if it supports one. */
   model?: string;
+  /**
+   * Where the provider API key lives (keystore exec ref / env template /
+   * literal). Resolved at spawn time; never written as plaintext here by
+   * /config (it goes into secrets.enc).
+   */
+  apiKey?: SecretInput;
   permissionMode?: AgentPermissionMode;
   reasoningEffort?: string;
 }
@@ -352,6 +363,17 @@ export function getAgentType(cfg: Partial<AppConfig>): string {
 export function getAgentModel(cfg: Partial<AppConfig>): string | undefined {
   const raw = cfg.preferences?.agent?.model;
   return typeof raw === 'string' && raw.trim() ? raw.trim() : undefined;
+}
+
+/** Provider profile id for the claude adapter ('anthropic' = own login). */
+export function getAgentProvider(cfg: Partial<AppConfig>): string | undefined {
+  const raw = cfg.preferences?.agent?.provider;
+  return typeof raw === 'string' && raw.trim() ? raw.trim() : undefined;
+}
+
+/** SecretInput reference for the provider API key, if configured. */
+export function getAgentApiKeyRef(cfg: Partial<AppConfig>): SecretInput | undefined {
+  return cfg.preferences?.agent?.apiKey;
 }
 
 /**

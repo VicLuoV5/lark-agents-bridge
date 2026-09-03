@@ -1,14 +1,16 @@
 import dns from 'node:dns';
 import { createInterface } from 'node:readline';
 import pkg from '../../../package.json';
-import { resolveAgent } from '../../agent/registry';
+import { select } from '@clack/prompts';
+import { knownAgentTypes, resolveAgent, type AgentCreateOptions } from '../../agent/registry';
 import { startChannel, type BridgeChannel } from '../../bot/channel';
 import { runRegistrationWizard } from '../../bot/wizard';
 import type { Controls } from '../../commands';
 import { setSecret } from '../../config/keystore';
 import { paths } from '../../config/paths';
 import type { AppConfig } from '../../config/schema';
-import { getAgentType, isComplete, secretKeyForApp } from '../../config/schema';
+import { getAgentProvider, getAgentType, isComplete, secretKeyForApp } from '../../config/schema';
+import { resolveAgentSecret } from '../../config/secret-resolver';
 import {
   buildEncryptedAccountConfig,
   ensureSecretsGetterWrapper,
@@ -49,6 +51,41 @@ process.on('uncaughtException', (err) => {
 
 const MEDIA_GC_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 
+/**
+ * Ask the operator which agent CLI to bridge on first run. Skipped when
+ * only one agent is registered (no real choice to make) or stdin isn't a
+ * TTY (daemonized starts can't answer).
+ */
+async function chooseAgentInteractively(): Promise<string | undefined> {
+  const types = knownAgentTypes();
+  if (types.length <= 1 || !process.stdin.isTTY) return undefined;
+  const options: { value: string; label: string; hint: string }[] = [];
+  for (const t of types) {
+    const r = await resolveAgent(t);
+    options.push({
+      value: t,
+      label: t,
+      hint: r.adapter ? '✓ 已检测到 CLI' : '未检测到（安装后可用）',
+    });
+  }
+  const picked = await select({
+    message: '选择要桥接的 agent CLI（回车确认）',
+    options,
+  });
+  if (typeof picked !== 'string') return undefined;
+  return picked;
+}
+
+/** Registry create-options from the active config (provider profile + key). */
+async function agentCreateOptions(cfg: AppConfig): Promise<AgentCreateOptions> {
+  try {
+    return { provider: getAgentProvider(cfg), apiKey: await resolveAgentSecret(cfg) };
+  } catch (err) {
+    console.error(`✗ agent API key 解析失败：${err instanceof Error ? err.message : String(err)}`);
+    process.exit(1);
+  }
+}
+
 export interface StartOptions {
   config?: string;
   skipCheckLarkCli?: boolean;
@@ -68,6 +105,17 @@ export async function runStart(opts: StartOptions): Promise<void> {
     cfg = await maybeMigratePlaintextSecret(cfg, configPath);
   } else {
     const fresh = await runRegistrationWizard();
+    // First run: if more than one agent CLI is registered, let the operator
+    // pick which one to bridge (default codex). Probing marks which CLIs
+    // are actually installed so the choice isn't blind.
+    const agentType = await chooseAgentInteractively();
+    if (agentType) {
+      fresh.preferences = {
+        ...fresh.preferences,
+        agent: { ...fresh.preferences?.agent, type: agentType },
+      };
+      console.log(`  agent: ${agentType}\n`);
+    }
     // Fresh credentials from the wizard arrive as a plaintext secret;
     // immediately encrypt before persisting so disk never holds the raw value.
     cfg = await persistEncrypted(fresh, configPath);
@@ -78,7 +126,7 @@ export async function runStart(opts: StartOptions): Promise<void> {
 
   // Resolve the configured agent (preferences.agent.type, default codex)
   // and verify its CLI exists before wiring the bridge.
-  const resolution = await resolveAgent(getAgentType(cfg));
+  const resolution = await resolveAgent(getAgentType(cfg), await agentCreateOptions(cfg));
   if (resolution.error || !resolution.adapter) {
     console.error(`✗ ${resolution.error ?? 'agent 不可用'}`);
     process.exit(1);
@@ -160,9 +208,15 @@ export async function runStart(opts: StartOptions): Promise<void> {
         // this ordering, a failed restart would tear down the only
         // keepalive in the process and the bot would never recover until
         // someone manually restarts it.
+        // Re-resolve the agent so /config changes to agent.type / provider
+        // / API key take effect without a full process restart.
+        const nextResolution = await resolveAgent(getAgentType(next), await agentCreateOptions(next));
+        if (nextResolution.error || !nextResolution.adapter) {
+          throw new Error(nextResolution.error ?? 'agent 不可用');
+        }
         const next_bridge = await startChannel({
           cfg: next,
-          agent,
+          agent: nextResolution.adapter,
           sessions,
           workspaces,
           controls,

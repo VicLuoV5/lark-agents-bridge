@@ -12,9 +12,11 @@ import {
 import { configCancelledCard, configFormCard, configSavedCard } from '../card/config-card';
 import { forgetManagedCard, sendManagedCard, updateManagedCard } from '../card/managed';
 import { helpCard, resumeCard, statusCard, workspacesCard } from '../card/templates';
-import type { AppConfig, MessageReplyMode, TenantBrand } from '../config/schema';
+import type { AgentConfig, AppConfig, MessageReplyMode, SecretInput, TenantBrand } from '../config/schema';
 import {
+  getAgentModel,
   getAgentPermissionMode,
+  getAgentProvider,
   getAgentReasoningEffort,
   getAgentStopGraceMs,
   getMaxConcurrentRuns,
@@ -27,6 +29,7 @@ import {
   isAdmin,
   secretKeyForApp,
 } from '../config/schema';
+import { PROVIDER_PROFILES, secretKeyForProvider } from '../agent/providers';
 import { setSecret } from '../config/keystore';
 import { buildEncryptedAccountConfig, saveConfig } from '../config/store';
 import { log, readRecentLogs, sanitizeLogsForDoctor } from '../core/logger';
@@ -921,6 +924,8 @@ async function showConfigForm(ctx: CommandContext): Promise<void> {
     runIdleTimeoutMinutes: ms ? Math.round(ms / 60_000) : 0,
     agentReasoningEffort: getAgentReasoningEffort(ctx.controls.cfg),
     agentPermissionMode: getAgentPermissionMode(ctx.controls.cfg),
+    agentProvider: getAgentProvider(ctx.controls.cfg),
+    agentModel: getAgentModel(ctx.controls.cfg),
     requireMentionInGroup: getRequireMentionInGroup(ctx.controls.cfg),
     allowedUsers: (access.allowedUsers ?? []).join(', '),
     allowedChats: (access.allowedChats ?? []).join(', '),
@@ -1002,6 +1007,35 @@ async function submitConfig(ctx: CommandContext): Promise<void> {
   } else if (isCodexPermissionMode(rawPermissionMode)) {
     agentPermissionMode = rawPermissionMode;
   }
+
+  // Provider / model / provider API key (claude adapter). Empty key input =
+  // keep whatever is configured; switching back to 官方登录 drops the ref.
+  const rawProvider = String(fv.agent_provider ?? '').trim();
+  const prevAgent = ctx.controls.cfg.preferences?.agent ?? {};
+  let agentProvider: string | undefined = getAgentProvider(ctx.controls.cfg);
+  if (rawProvider === 'anthropic') {
+    agentProvider = undefined;
+  } else if (rawProvider in PROVIDER_PROFILES) {
+    agentProvider = rawProvider;
+  }
+  const agentModel = String(fv.agent_model ?? '').trim() || getAgentModel(ctx.controls.cfg);
+  const rawApiKey = String(fv.agent_api_key ?? '').trim();
+  let agentKeyConfigured = false;
+  let agentApiKeyRef: SecretInput | undefined = prevAgent.apiKey;
+  if (rawApiKey && agentProvider) {
+    // Plaintext goes into the keystore; config.json only carries an exec
+    // SecretRef (same pattern as the bot's App Secret).
+    await setSecret(secretKeyForProvider(agentProvider), rawApiKey);
+    agentApiKeyRef = { source: 'exec', provider: 'bridge', id: secretKeyForProvider(agentProvider) };
+  }
+  if (agentProvider && (rawApiKey || agentApiKeyRef)) {
+    agentKeyConfigured = Boolean(agentApiKeyRef);
+  } else {
+    agentApiKeyRef = undefined;
+  }
+  const agentProviderNote = agentProvider
+    ? PROVIDER_PROFILES[agentProvider]?.note
+    : undefined;
 
   // Parse access lists. Comma-separated; trim each, drop empties, dedupe.
   // Empty list = unrestricted (back-compat).
@@ -1089,10 +1123,13 @@ async function submitConfig(ctx: CommandContext): Promise<void> {
       maxConcurrentRuns,
       runIdleTimeoutMinutes,
       agent: {
-        ...(ctx.controls.cfg.preferences?.agent ?? {}),
+        type: prevAgent.type,
+        provider: agentProvider,
+        model: agentModel,
         reasoningEffort: agentReasoningEffort,
         permissionMode: agentPermissionMode,
-      },
+        ...(agentApiKeyRef ? { apiKey: agentApiKeyRef } : {}),
+      } satisfies AgentConfig,
       requireMentionInGroup,
       // Empty arrays serialize fine but read identically to omitted ones
       // (isUserAllowed / isAdmin both treat length===0 as unrestricted).
@@ -1118,6 +1155,9 @@ async function submitConfig(ctx: CommandContext): Promise<void> {
       showToolCalls,
       maxConcurrentRuns,
       runIdleTimeoutMinutes,
+      agentProvider: agentProvider ?? 'anthropic',
+      agentModel: agentModel ?? 'default',
+      agentKeyConfigured,
       agentReasoningEffort: agentReasoningEffort ?? 'default',
       agentPermissionMode: agentPermissionMode ?? 'default',
       requireMentionInGroup,
@@ -1134,6 +1174,10 @@ async function submitConfig(ctx: CommandContext): Promise<void> {
         showToolCalls,
         maxConcurrentRuns,
         runIdleTimeoutMinutes,
+        agentProvider,
+        agentProviderNote,
+        agentKeyConfigured,
+        agentModel,
         agentReasoningEffort,
         agentPermissionMode,
         requireMentionInGroup,

@@ -7,4 +7,6 @@ export type {
   AgentRunOptions,
 } from './types';
 export { CodexAdapter } from './codex/adapter';
-export { knownAgentTypes, resolveAgent, type AgentResolution } from './registry';
+export { ClaudeAdapter } from './claude/adapter';
+export { PROVIDER_PROFILES, getProviderProfile, secretKeyForProvider, type ProviderProfile } from './providers';
+export { knownAgentTypes, resolveAgent, type AgentCreateOptions, type AgentResolution } from './registry';

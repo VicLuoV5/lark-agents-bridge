@@ -1,26 +1,38 @@
 import { createInterface } from 'node:readline';
 import { buildBridgePrompt, prepareAgentEnv } from '../bridge';
 import { spawnAgentCommand, stopChild, waitForChildExit, type AgentChild } from '../proc';
+import { getProviderProfile } from '../providers';
 import { log } from '../../core/logger';
 import { withWindowsNpmGlobalBin } from '../../runtime/path-env';
-import { isCodexReasoningEffort } from '../../config/schema';
-import { listRecentSessions } from '../../session/history';
 import { workspaceRoot } from '../../workspace/guard';
-import type { AgentAdapter, AgentEvent, AgentHistory, AgentRun, AgentRunOptions } from '../types';
-import { translateCodexEvent } from './stream-json';
+import type { AgentAdapter, AgentEvent, AgentRun, AgentRunOptions } from '../types';
+import { createClaudeTranslatorState, translateClaudeEvent } from './stream-json';
 
-export interface CodexAdapterOptions {
+export interface ClaudeAdapterOptions {
   binary?: string;
+  /** Provider profile id (undefined / 'anthropic' = the user's own login). */
+  provider?: string;
+  /** Resolved provider API key plaintext. */
+  apiKey?: string;
 }
 
-export class CodexAdapter implements AgentAdapter {
-  readonly id = 'codex';
-  readonly displayName = 'Codex';
-  readonly history: AgentHistory = { list: listRecentSessions };
+/**
+ * Adapter for the Claude Code CLI (headless `claude -p`). With a provider
+ * profile configured it points Claude Code at an Anthropic-compatible
+ * vendor endpoint via env, so one adapter covers DeepSeek/GLM/Kimi/Qwen/
+ * 豆包/MiniMax models.
+ */
+export class ClaudeAdapter implements AgentAdapter {
+  readonly id = 'claude';
+  readonly displayName = 'Claude Code';
   private readonly binary: string;
+  private readonly provider?: string;
+  private readonly apiKey?: string;
 
-  constructor(opts: CodexAdapterOptions = {}) {
-    this.binary = opts.binary ?? process.env.CODEX_BIN ?? 'codex';
+  constructor(opts: ClaudeAdapterOptions = {}) {
+    this.binary = opts.binary ?? process.env.CLAUDE_BIN ?? 'claude';
+    this.provider = opts.provider;
+    this.apiKey = opts.apiKey;
   }
 
   async isAvailable(): Promise<boolean> {
@@ -37,12 +49,14 @@ export class CodexAdapter implements AgentAdapter {
   run(opts: AgentRunOptions): AgentRun {
     const cwd = opts.cwd ?? workspaceRoot();
     const { env, larkCli } = prepareAgentEnv(cwd);
+    applyProviderEnv(env, this.provider, this.apiKey, opts.model);
     const args = buildArgs(opts, larkCli ? [larkCli.toolsDir] : []);
     const child = spawnAgentCommand(this.binary, args, {
       cwd,
       env,
       stdio: ['pipe', 'pipe', 'pipe'],
     });
+    // `claude -p` with no prompt argument reads the prompt from stdin.
     child.stdin.end(`${buildBridgePrompt(opts.prompt, { larkCli })}\n`);
 
     log.info('agent', 'spawn', {
@@ -52,7 +66,9 @@ export class CodexAdapter implements AgentAdapter {
       promptChars: opts.prompt.length,
       model: opts.model,
       reasoningEffort: opts.reasoningEffort,
+      permissionMode: opts.permissionMode,
       binary: this.binary,
+      provider: this.provider ?? 'anthropic',
       larkCli: larkCli?.commandPath,
     });
 
@@ -92,53 +108,45 @@ export class CodexAdapter implements AgentAdapter {
   }
 }
 
-export function buildArgs(opts: AgentRunOptions, extraSandboxDirs: string[] = []): string[] {
-  const sandbox = sandboxForPermissionMode(opts.permissionMode);
+/**
+ * Inject the provider profile's env into the spawned claude process.
+ * ANTHROPIC_BASE_URL + the profile's token env are the officially supported
+ * gateway overrides; model mapping mirrors vendor docs (all DEFAULT_* tiers
+ * point at the chosen model unless the profile names a haiku-class one).
+ */
+function applyProviderEnv(
+  env: NodeJS.ProcessEnv,
+  providerId: string | undefined,
+  apiKey: string | undefined,
+  model: string | undefined,
+): void {
+  const profile = getProviderProfile(providerId);
+  if (!profile) return;
+  env.ANTHROPIC_BASE_URL = profile.baseUrl;
+  if (apiKey) env[profile.tokenEnvVar] = apiKey;
+  if (model) {
+    env.ANTHROPIC_MODEL = model;
+    env.ANTHROPIC_DEFAULT_SONNET_MODEL = model;
+    env.ANTHROPIC_DEFAULT_OPUS_MODEL = model;
+    env.ANTHROPIC_DEFAULT_HAIKU_MODEL = profile.haikuModel ?? model;
+  }
+  if (profile.extraEnv) Object.assign(env, profile.extraEnv);
+}
+
+export function buildArgs(opts: AgentRunOptions, extraDirs: string[] = []): string[] {
   const base = [
-    'exec',
-    '--json',
-    '--sandbox',
-    sandbox,
-    '--skip-git-repo-check',
+    '-p',
+    '--output-format', 'stream-json',
+    '--include-partial-messages',
+    '--verbose',
   ];
-  for (const dir of [...extraSandboxDirsForPermissionMode(opts.permissionMode), ...extraSandboxDirs]) {
+  for (const dir of extraDirs) {
     base.push('--add-dir', dir);
   }
   if (opts.model) base.push('--model', opts.model);
-  // reasoningEffort is opaque at the bridge level — validate the Codex
-  // vocabulary here and ignore anything else with a warning.
-  if (opts.reasoningEffort) {
-    if (isCodexReasoningEffort(opts.reasoningEffort)) {
-      base.push('-c', `model_reasoning_effort="${opts.reasoningEffort}"`);
-    } else {
-      log.warn('agent', 'reasoning-effort-ignored', {
-        agent: 'codex',
-        value: opts.reasoningEffort,
-        supported: 'minimal|low|medium|high|xhigh',
-      });
-    }
-  }
-  if (opts.sessionId) {
-    base.push('resume', opts.sessionId, '-');
-  } else {
-    base.push('-');
-  }
+  if (opts.permissionMode) base.push('--permission-mode', opts.permissionMode);
+  if (opts.sessionId) base.push('--resume', opts.sessionId);
   return base;
-}
-
-function sandboxForPermissionMode(mode: AgentRunOptions['permissionMode']): string {
-  if (mode === 'bypassPermissions') return 'danger-full-access';
-  if (mode === 'acceptEdits') return 'workspace-write';
-  return 'read-only';
-}
-
-export function extraSandboxDirsForPermissionMode(
-  mode: AgentRunOptions['permissionMode'],
-  _env: NodeJS.ProcessEnv = process.env,
-  _platform = process.platform,
-): string[] {
-  if (mode !== 'acceptEdits') return [];
-  return [];
 }
 
 async function* createEventStream(
@@ -150,11 +158,13 @@ async function* createEventStream(
     const err = getError();
     yield {
       type: 'error',
-      message: err ? `failed to spawn codex: ${err.message}` : 'spawn returned no pid',
+      message: err ? `failed to spawn claude: ${err.message}` : 'spawn returned no pid',
     };
     return;
   }
 
+  const state = createClaudeTranslatorState();
+  let sawError = false;
   const rl = createInterface({ input: child.stdout, crlfDelay: Infinity });
   try {
     for await (const line of rl) {
@@ -166,7 +176,10 @@ async function* createEventStream(
       } catch {
         continue;
       }
-      yield* translateCodexEvent(parsed);
+      for (const evt of translateClaudeEvent(parsed, state)) {
+        if (evt.type === 'error') sawError = true;
+        yield evt;
+      }
     }
   } finally {
     rl.close();
@@ -180,11 +193,13 @@ async function* createEventStream(
     }
   });
   const runtimeError = getError();
-  if (exitCode !== 0 && exitCode !== null) {
+  // A `result` error event already carries the failure detail — don't pile
+  // a second error on top of it when the CLI also exits nonzero.
+  if (!sawError && exitCode !== 0 && exitCode !== null) {
     const stderr = Buffer.concat(stderrChunks).toString('utf8').trim();
     const detail = stderr ? `: ${stderr.slice(0, 500)}` : '';
-    yield { type: 'error', message: `codex exited with code ${exitCode}${detail}` };
-  } else if (runtimeError) {
-    yield { type: 'error', message: `codex runtime error: ${runtimeError.message}` };
+    yield { type: 'error', message: `claude exited with code ${exitCode}${detail}` };
+  } else if (!sawError && runtimeError) {
+    yield { type: 'error', message: `claude runtime error: ${runtimeError.message}` };
   }
 }

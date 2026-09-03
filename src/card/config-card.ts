@@ -4,6 +4,7 @@ import {
   type AgentPermissionMode,
   type MessageReplyMode,
 } from '../config/schema';
+import { PROVIDER_PROFILES } from '../agent/providers';
 
 export interface ConfigFormOpts {
   messageReply: MessageReplyMode;
@@ -15,6 +16,9 @@ export interface ConfigFormOpts {
   agentReasoningEffort?: string;
   /** Undefined means read-only/default sandbox. */
   agentPermissionMode?: AgentPermissionMode;
+  /** undefined / 'anthropic' = the user's own Claude login. */
+  agentProvider?: string;
+  agentModel?: string;
   requireMentionInGroup: boolean;
   /** Comma-separated open_id allowlist; empty string = unrestricted. */
   allowedUsers: string;
@@ -155,6 +159,52 @@ export function configFormCard(opts: ConfigFormOpts): object {
             {
               tag: 'markdown',
               content:
+                '\n**模型供应商**（Claude Code agent）\n' +
+                '_官方登录(默认):用你自己的 Claude Code 登录,不注入任何端点_\n' +
+                '_选其他供应商后,Claude Code 会改走该厂商的 Anthropic 兼容端点_\n' +
+                '_仅对 agent 类型 = Claude Code 生效;Codex 忽略此项_',
+            },
+            {
+              tag: 'select_static',
+              name: 'agent_provider',
+              initial_option: opts.agentProvider ?? 'anthropic',
+              options: [
+                { text: { tag: 'plain_text', content: '官方登录(默认)' }, value: 'anthropic' },
+                ...Object.values(PROVIDER_PROFILES).map((p) => ({
+                  text: { tag: 'plain_text', content: p.displayName },
+                  value: p.id,
+                })),
+              ],
+            },
+            {
+              tag: 'markdown',
+              content:
+                '\n**模型**\n' +
+                '_交给 agent 的模型 id。留空 = 供应商/官方默认_',
+            },
+            {
+              tag: 'input',
+              name: 'agent_model',
+              default_value: opts.agentModel ?? '',
+              placeholder: { tag: 'plain_text', content: '模型 id（留空 = 默认）' },
+              input_type: 'text',
+            },
+            {
+              tag: 'markdown',
+              content:
+                '\n**供应商 API Key**\n' +
+                '_仅非官方供应商需要。提交后写入本机加密 keystore,不进 config/日志_\n' +
+                '_⚠️ 留空 = 保持现状;换供应商后必须提交新 Key_',
+            },
+            {
+              tag: 'input',
+              name: 'agent_api_key',
+              placeholder: { tag: 'plain_text', content: 'API Key（留空 = 保持不变）' },
+              input_type: 'text',
+            },
+            {
+              tag: 'markdown',
+              content:
                 '\n**群里需要 @ bot**\n' +
                 '_是(默认):群和话题群里,不 @ bot 的消息不会触发回复,bot 不接群里聊天_\n' +
                 '_否:任何消息都会发给 agent(0.1.21 及更早版本的行为)_\n' +
@@ -258,7 +308,9 @@ export function configFormCard(opts: ConfigFormOpts): object {
   };
 }
 
-export function configSavedCard(opts: ConfigFormOpts): object {
+export function configSavedCard(
+  opts: ConfigFormOpts & { agentKeyConfigured?: boolean; agentProviderNote?: string },
+): object {
   const replyLabel =
     opts.messageReply === 'card'
       ? '交互卡片'
@@ -269,6 +321,14 @@ export function configSavedCard(opts: ConfigFormOpts): object {
     const items = raw.split(',').map((s) => s.trim()).filter(Boolean);
     return items.length === 0 ? '_(不限制)_' : `${items.length} 项`;
   };
+  const providerLabel =
+    opts.agentProvider && opts.agentProvider !== 'anthropic'
+      ? `\`${opts.agentProvider}\``
+      : '官方登录';
+  const keyLine =
+    !opts.agentProvider || opts.agentProvider === 'anthropic'
+      ? ''
+      : `\n**API Key**:${opts.agentKeyConfigured ? '`已配置`' : '⚠️ `_未配置_（将无法调用）`'}`;
   return {
     schema: '2.0',
     config: { summary: { content: '偏好已保存' } },
@@ -282,6 +342,8 @@ export function configSavedCard(opts: ConfigFormOpts): object {
             `**工具调用显示**:\`${opts.showToolCalls ? 'show' : 'hide'}\`\n` +
             `**并发上限**:\`${opts.maxConcurrentRuns}\`\n` +
             `**run 探活**:\`${opts.runIdleTimeoutMinutes > 0 ? `${opts.runIdleTimeoutMinutes} 分钟` : '关闭'}\`\n` +
+            `**模型供应商**:${providerLabel}${opts.agentProviderNote ? `\n_ℹ️ ${opts.agentProviderNote}_` : ''}${keyLine}\n` +
+            `**模型**:\`${opts.agentModel ?? '默认'}\`\n` +
             `**推理强度**:\`${opts.agentReasoningEffort ?? '默认'}\`\n` +
             `**文件权限**:\`${opts.agentPermissionMode ?? '默认/只读'}\`\n` +
             `**群里需要 @ bot**:\`${opts.requireMentionInGroup ? '是' : '否'}\`\n\n` +

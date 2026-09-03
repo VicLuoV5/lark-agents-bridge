@@ -14,9 +14,9 @@ import { forgetManagedCard, sendManagedCard, updateManagedCard } from '../card/m
 import { helpCard, resumeCard, statusCard, workspacesCard } from '../card/templates';
 import type { AppConfig, MessageReplyMode, TenantBrand } from '../config/schema';
 import {
+  getAgentPermissionMode,
+  getAgentReasoningEffort,
   getAgentStopGraceMs,
-  getCodexPermissionMode,
-  getCodexReasoningEffort,
   getMaxConcurrentRuns,
   getMessageReplyMode,
   getRequireMentionInGroup,
@@ -38,7 +38,7 @@ import {
   reduce,
   type RunState,
 } from '../card/run-state';
-import { formatRelTime, listRecentSessions } from '../session/history';
+import { formatRelTime } from '../session/history';
 import { isAlive, readAndPrune, resolveTarget } from '../runtime/registry';
 import type { SessionStore } from '../session/store';
 import { validateAppCredentials } from '../utils/feishu-auth';
@@ -368,8 +368,15 @@ async function handleResume(args: string, ctx: CommandContext): Promise<void> {
   const n = Number.parseInt(sub, 10);
   const limit = Number.isFinite(n) && n > 0 && n <= 20 ? n : 5;
 
+  // Not every adapter can enumerate resumable sessions (Codex reads its
+  // own ~/.codex jsonl; others have no such surface yet).
+  if (!ctx.agent.history) {
+    await reply(ctx, `当前 agent（${ctx.agent.displayName}）暂不支持 /resume。`);
+    return;
+  }
+
   const cwd = ctx.workspaces.cwdFor(ctx.scope) ?? workspaceRoot();
-  const sessions = await listRecentSessions(cwd, limit);
+  const sessions = await ctx.agent.history.list(cwd, limit);
   const currentSession = ctx.sessions.getRaw(ctx.scope);
   const entries = sessions.map((s) => ({
     sessionId: s.sessionId,
@@ -400,8 +407,8 @@ async function handleStatus(_args: string, ctx: CommandContext): Promise<void> {
     sessionId: sess?.sessionId,
     sessionStale: Boolean(sess && sess.cwd !== cwd),
     agentName: ctx.agent.displayName,
-    reasoningEffort: getCodexReasoningEffort(ctx.controls.cfg),
-    permissionMode: getCodexPermissionMode(ctx.controls.cfg),
+    reasoningEffort: getAgentReasoningEffort(ctx.controls.cfg),
+    permissionMode: getAgentPermissionMode(ctx.controls.cfg),
     scope: ctx.scope,
     chatMode: ctx.chatMode,
   });
@@ -639,8 +646,8 @@ async function handleDoctor(args: string, ctx: CommandContext): Promise<void> {
   const run = ctx.agent.run({
     prompt,
     cwd: workspaceRoot(),
-    reasoningEffort: getCodexReasoningEffort(ctx.controls.cfg),
-    permissionMode: getCodexPermissionMode(ctx.controls.cfg),
+    reasoningEffort: getAgentReasoningEffort(ctx.controls.cfg),
+    permissionMode: getAgentPermissionMode(ctx.controls.cfg),
     stopGraceMs: getAgentStopGraceMs(ctx.controls.cfg),
   });
   const handle = ctx.activeRuns.register(ctx.scope, run);
@@ -912,8 +919,8 @@ async function showConfigForm(ctx: CommandContext): Promise<void> {
     showToolCalls: getShowToolCalls(ctx.controls.cfg),
     maxConcurrentRuns: getMaxConcurrentRuns(ctx.controls.cfg),
     runIdleTimeoutMinutes: ms ? Math.round(ms / 60_000) : 0,
-    codexReasoningEffort: getCodexReasoningEffort(ctx.controls.cfg),
-    codexPermissionMode: getCodexPermissionMode(ctx.controls.cfg),
+    agentReasoningEffort: getAgentReasoningEffort(ctx.controls.cfg),
+    agentPermissionMode: getAgentPermissionMode(ctx.controls.cfg),
     requireMentionInGroup: getRequireMentionInGroup(ctx.controls.cfg),
     allowedUsers: (access.allowedUsers ?? []).join(', '),
     allowedChats: (access.allowedChats ?? []).join(', '),
@@ -977,20 +984,23 @@ async function submitConfig(ctx: CommandContext): Promise<void> {
   else if (rawRequireMention === 'no') requireMentionInGroup = false;
   else requireMentionInGroup = getRequireMentionInGroup(ctx.controls.cfg);
 
-  const rawReasoningEffort = String(fv.codex_reasoning_effort ?? '').trim();
-  let codexReasoningEffort = getCodexReasoningEffort(ctx.controls.cfg);
+  // Form field names are agent_reasoning_effort / agent_permission_mode;
+  // legacy codex_* names still accepted so cards rendered by an older
+  // bridge keep submitting correctly across an upgrade.
+  const rawReasoningEffort = String(fv.agent_reasoning_effort ?? fv.codex_reasoning_effort ?? '').trim();
+  let agentReasoningEffort = getAgentReasoningEffort(ctx.controls.cfg);
   if (rawReasoningEffort === 'default') {
-    codexReasoningEffort = undefined;
-  } else if (isCodexReasoningEffort(rawReasoningEffort)) {
-    codexReasoningEffort = rawReasoningEffort;
+    agentReasoningEffort = undefined;
+  } else if (rawReasoningEffort && isCodexReasoningEffort(rawReasoningEffort)) {
+    agentReasoningEffort = rawReasoningEffort;
   }
 
-  const rawPermissionMode = String(fv.codex_permission_mode ?? '').trim();
-  let codexPermissionMode = getCodexPermissionMode(ctx.controls.cfg);
+  const rawPermissionMode = String(fv.agent_permission_mode ?? fv.codex_permission_mode ?? '').trim();
+  let agentPermissionMode = getAgentPermissionMode(ctx.controls.cfg);
   if (rawPermissionMode === 'default') {
-    codexPermissionMode = undefined;
+    agentPermissionMode = undefined;
   } else if (isCodexPermissionMode(rawPermissionMode)) {
-    codexPermissionMode = rawPermissionMode;
+    agentPermissionMode = rawPermissionMode;
   }
 
   // Parse access lists. Comma-separated; trim each, drop empties, dedupe.
@@ -1078,13 +1088,20 @@ async function submitConfig(ctx: CommandContext): Promise<void> {
       showToolCalls,
       maxConcurrentRuns,
       runIdleTimeoutMinutes,
-      codexReasoningEffort,
-      codexPermissionMode,
+      agent: {
+        ...(ctx.controls.cfg.preferences?.agent ?? {}),
+        reasoningEffort: agentReasoningEffort,
+        permissionMode: agentPermissionMode,
+      },
       requireMentionInGroup,
       // Empty arrays serialize fine but read identically to omitted ones
       // (isUserAllowed / isAdmin both treat length===0 as unrestricted).
       access: { allowedUsers, allowedChats, admins },
     };
+    // The agent section now owns reasoning/permission values — drop the
+    // legacy top-level fields so the config carries one source of truth.
+    delete ctx.controls.cfg.preferences.codexReasoningEffort;
+    delete ctx.controls.cfg.preferences.codexPermissionMode;
 
     try {
       await saveConfig(ctx.controls.cfg, configPath);
@@ -1101,8 +1118,8 @@ async function submitConfig(ctx: CommandContext): Promise<void> {
       showToolCalls,
       maxConcurrentRuns,
       runIdleTimeoutMinutes,
-      codexReasoningEffort: codexReasoningEffort ?? 'default',
-      codexPermissionMode: codexPermissionMode ?? 'default',
+      agentReasoningEffort: agentReasoningEffort ?? 'default',
+      agentPermissionMode: agentPermissionMode ?? 'default',
       requireMentionInGroup,
       allowedUsersCount: allowedUsers.length,
       allowedChatsCount: allowedChats.length,
@@ -1117,8 +1134,8 @@ async function submitConfig(ctx: CommandContext): Promise<void> {
         showToolCalls,
         maxConcurrentRuns,
         runIdleTimeoutMinutes,
-        codexReasoningEffort,
-        codexPermissionMode,
+        agentReasoningEffort,
+        agentPermissionMode,
         requireMentionInGroup,
         allowedUsers: allowedUsers.join(', '),
         allowedChats: allowedChats.join(', '),

@@ -1,4 +1,4 @@
-import type { CodexPermissionMode, CodexReasoningEffort } from '../config/schema';
+import type { AgentPermissionMode } from '../config/schema';
 
 export type AgentEvent =
   | { type: 'system'; sessionId?: string; cwd?: string; model?: string }
@@ -15,8 +15,13 @@ export interface AgentRunOptions {
   cwd?: string;
   sessionId?: string;
   model?: string;
-  reasoningEffort?: CodexReasoningEffort;
-  permissionMode?: CodexPermissionMode;
+  /**
+   * Opaque reasoning-effort knob. The vocabulary is adapter-specific (Codex:
+   * minimal/low/medium/high/xhigh; dsh: off/low/high/max; ...) — each adapter
+   * validates and ignores (with a warning) values it doesn't understand.
+   */
+  reasoningEffort?: string;
+  permissionMode?: AgentPermissionMode;
   /**
    * Grace period (ms) between SIGTERM and SIGKILL when stop() is called on
    * the returned run. Lets the agent (and any subprocess it spawned, e.g.
@@ -44,9 +49,28 @@ export interface AgentRun {
   waitForExit(timeoutMs: number): Promise<boolean>;
 }
 
+/** One entry of an adapter's resumable-session history (for /resume). */
+export interface AgentHistoryEntry {
+  sessionId: string;
+  mtime: number;
+  preview: string;
+  lineCount: number;
+}
+
+/**
+ * Optional per-adapter session-history capability. Adapters whose CLI can
+ * list resumable sessions for a cwd (Codex: ~/.codex jsonl) implement this;
+ * the /resume command hides itself when the active adapter doesn't.
+ */
+export interface AgentHistory {
+  list(cwd: string, limit?: number): Promise<AgentHistoryEntry[]>;
+}
+
 export interface AgentAdapter {
   readonly id: string;
   readonly displayName: string;
   isAvailable(): Promise<boolean>;
   run(opts: AgentRunOptions): AgentRun;
+  /** Absent = the adapter has no resumable-session listing (/resume hidden). */
+  readonly history?: AgentHistory;
 }

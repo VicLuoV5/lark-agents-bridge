@@ -1,5 +1,5 @@
-import { CodexAdapter } from '../../agent/codex/adapter';
-import { isComplete } from '../../config/schema';
+import { resolveAgent } from '../../agent/registry';
+import { getAgentType, isComplete } from '../../config/schema';
 import { loadConfig } from '../../config/store';
 import { daemonStderrPath, daemonStdoutPath } from '../../daemon/paths';
 import {
@@ -137,10 +137,15 @@ async function reportConnectAfter(
 
   const entry = await waitForServiceConnect(appId, beforePids);
   if (entry) {
-    const agent = new CodexAdapter();
+    // Best-effort display name for the configured agent; unknown/unavailable
+    // types fall back to the raw type id (this is a status line, not a gate).
+    const resolution = await resolveAgent(getAgentType(cfg));
+    const agentLabel = resolution.adapter
+      ? `${resolution.adapter.displayName} (${resolution.adapter.id})`
+      : `${getAgentType(cfg)} (unavailable)`;
     const verbZh = verb === 'started' ? '已启动' : '已重启';
     console.log(
-      `✓ ${verbZh}  bot: ${entry.botName} (${entry.appId})  agent: ${agent.displayName} (${agent.id})  进程: ${entry.id}`,
+      `✓ ${verbZh}  bot: ${entry.botName} (${entry.appId})  agent: ${agentLabel}  进程: ${entry.id}`,
     );
     return;
   }

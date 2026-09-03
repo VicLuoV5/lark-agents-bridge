@@ -1,8 +1,7 @@
 import {
-  CODEX_PERMISSION_MODES,
+  AGENT_PERMISSION_MODES,
   CODEX_REASONING_EFFORTS,
-  type CodexPermissionMode,
-  type CodexReasoningEffort,
+  type AgentPermissionMode,
   type MessageReplyMode,
 } from '../config/schema';
 
@@ -12,10 +11,10 @@ export interface ConfigFormOpts {
   maxConcurrentRuns: number;
   /** 0 means "disabled". */
   runIdleTimeoutMinutes: number;
-  /** Undefined means inherit Codex config. */
-  codexReasoningEffort?: CodexReasoningEffort;
+  /** Opaque; undefined means inherit the agent CLI's own config. */
+  agentReasoningEffort?: string;
   /** Undefined means read-only/default sandbox. */
-  codexPermissionMode?: CodexPermissionMode;
+  agentPermissionMode?: AgentPermissionMode;
   requireMentionInGroup: boolean;
   /** Comma-separated open_id allowlist; empty string = unrestricted. */
   allowedUsers: string;
@@ -110,16 +109,16 @@ export function configFormCard(opts: ConfigFormOpts): object {
             {
               tag: 'markdown',
               content:
-                '\n**Codex 推理强度**\n' +
-                '_默认:继承 CODEX_HOME/config.toml 的 model_reasoning_effort_\n' +
-                '_仅影响通过 bridge 发起的 Codex run,不会修改全局 Codex 配置_',
+                '\n**推理强度**\n' +
+                '_默认:继承 agent CLI 自己的配置(Codex: CODEX_HOME/config.toml)_\n' +
+                '_仅影响通过 bridge 发起的 run,不会修改 agent 的全局配置_',
             },
             {
               tag: 'select_static',
-              name: 'codex_reasoning_effort',
-              initial_option: opts.codexReasoningEffort ?? 'default',
+              name: 'agent_reasoning_effort',
+              initial_option: opts.agentReasoningEffort ?? 'default',
               options: [
-                { text: { tag: 'plain_text', content: '默认(继承 Codex 配置)' }, value: 'default' },
+                { text: { tag: 'plain_text', content: '默认(继承 agent 配置)' }, value: 'default' },
                 ...CODEX_REASONING_EFFORTS.map((value) => ({
                   text: { tag: 'plain_text', content: value },
                   value,
@@ -129,17 +128,17 @@ export function configFormCard(opts: ConfigFormOpts): object {
             {
               tag: 'markdown',
               content:
-                '\n**Codex 文件权限**\n' +
-                '_只读:不会写文件。允许编辑:允许 Codex 在当前 workspace 内写文件_\n' +
-                '_全盘访问:允许 Codex 访问整机文件系统,只建议短期个人排障使用_',
+                '\n**文件权限**\n' +
+                '_只读:不会写文件。允许编辑:允许 agent 在当前 workspace 内写文件_\n' +
+                '_全盘访问:允许 agent 访问整机文件系统,只建议短期个人排障使用_',
             },
             {
               tag: 'select_static',
-              name: 'codex_permission_mode',
-              initial_option: opts.codexPermissionMode ?? 'default',
+              name: 'agent_permission_mode',
+              initial_option: opts.agentPermissionMode ?? 'default',
               options: [
                 { text: { tag: 'plain_text', content: '只读(默认)' }, value: 'default' },
-                ...CODEX_PERMISSION_MODES.filter((value) => value !== 'default').map((value) => ({
+                ...AGENT_PERMISSION_MODES.filter((value) => value !== 'default').map((value) => ({
                   text: {
                     tag: 'plain_text',
                     content:
@@ -283,8 +282,8 @@ export function configSavedCard(opts: ConfigFormOpts): object {
             `**工具调用显示**:\`${opts.showToolCalls ? 'show' : 'hide'}\`\n` +
             `**并发上限**:\`${opts.maxConcurrentRuns}\`\n` +
             `**run 探活**:\`${opts.runIdleTimeoutMinutes > 0 ? `${opts.runIdleTimeoutMinutes} 分钟` : '关闭'}\`\n` +
-            `**Codex 推理强度**:\`${opts.codexReasoningEffort ?? '默认'}\`\n` +
-            `**Codex 文件权限**:\`${opts.codexPermissionMode ?? '默认/只读'}\`\n` +
+            `**推理强度**:\`${opts.agentReasoningEffort ?? '默认'}\`\n` +
+            `**文件权限**:\`${opts.agentPermissionMode ?? '默认/只读'}\`\n` +
             `**群里需要 @ bot**:\`${opts.requireMentionInGroup ? '是' : '否'}\`\n\n` +
             '🔒 **访问控制**\n' +
             `**用户白名单**:${summarizeList(opts.allowedUsers)}\n` +

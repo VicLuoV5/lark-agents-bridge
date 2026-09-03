@@ -14,8 +14,13 @@ import type { WorkspaceStore } from '../workspace/store';
  * of dispatched to a built-in command handler. The double-underscore
  * sigils make it virtually impossible to collide with normal payload
  * fields the agent might set.
+ *
+ * `__codex_cb` is the pre-multi-agent name; still accepted so buttons
+ * rendered by an older bridge (or an agent reusing an old card) keep
+ * working across an upgrade.
  */
-const AGENT_CALLBACK_MARKER = '__codex_cb';
+const AGENT_CALLBACK_MARKER = '__bridge_cb';
+const LEGACY_CALLBACK_MARKER = '__codex_cb';
 
 export interface CardDispatchDeps {
   channel: LarkChannel;
@@ -75,7 +80,7 @@ export async function handleCardAction(deps: CardDispatchDeps): Promise<void> {
   // lark-cli, with `__codex_cb` set on the value. Forward the click back
   // into the scope's pending queue so the agent resumes its session and sees
   // the click as a follow-up message, with full context of what it sent.
-  if (AGENT_CALLBACK_MARKER in payload) {
+  if (AGENT_CALLBACK_MARKER in payload || LEGACY_CALLBACK_MARKER in payload) {
     forwardToAgent(deps, payload, formValue, scope, threadId);
     return;
   }
@@ -154,8 +159,8 @@ function forwardToAgent(
   scope: string,
   threadId: string | undefined,
 ): void {
-  // Strip the marker so the agent only sees the meaningful fields it set.
-  const { [AGENT_CALLBACK_MARKER]: _marker, ...agentPayload } = payload;
+  // Strip the marker(s) so the agent only sees the meaningful fields it set.
+  const { [AGENT_CALLBACK_MARKER]: _marker, [LEGACY_CALLBACK_MARKER]: _legacy, ...agentPayload } = payload;
   const merged = formValue ? { ...agentPayload, form_value: formValue } : agentPayload;
   log.info('cardAction', 'forward-agent', {
     scope,

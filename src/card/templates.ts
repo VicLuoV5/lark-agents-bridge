@@ -1,4 +1,4 @@
-import type { CodexPermissionMode, CodexReasoningEffort } from '../config/schema';
+import type { AgentPermissionMode } from '../config/schema';
 
 interface ButtonSpec {
   text: string;
@@ -68,8 +68,9 @@ export interface StatusInfo {
   sessionId?: string;
   sessionStale: boolean;
   agentName: string;
-  reasoningEffort?: CodexReasoningEffort;
-  permissionMode?: CodexPermissionMode;
+  /** Opaque — vocabulary is adapter-specific (shown verbatim). */
+  reasoningEffort?: string;
+  permissionMode?: AgentPermissionMode;
   /** Session scope (= chatId or chatId:threadId in topic groups). */
   scope: string;
   /** Chat mode — used to label scope. */
@@ -91,7 +92,7 @@ export function statusCard(info: StatusInfo): object {
     `📁 **cwd**: \`${escapeCode(info.cwd)}\``,
     `🔗 **session**: ${sessionLine}`,
     `🤖 **agent**: ${escapeMd(info.agentName)}`,
-    `🧠 **reasoning**: ${info.reasoningEffort ? `\`${info.reasoningEffort}\`` : '(继承 Codex 配置)'}`,
+    `🧠 **reasoning**: ${info.reasoningEffort ? `\`${info.reasoningEffort}\`` : '(继承 agent 配置)'}`,
     `🛡️ **permission**: ${info.permissionMode ? `\`${info.permissionMode}\`` : '`default/read-only`'}`,
   ];
   return shell('📊 当前状态', [

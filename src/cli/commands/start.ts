@@ -1,14 +1,14 @@
 import dns from 'node:dns';
 import { createInterface } from 'node:readline';
 import pkg from '../../../package.json';
-import { CodexAdapter } from '../../agent/codex/adapter';
+import { resolveAgent } from '../../agent/registry';
 import { startChannel, type BridgeChannel } from '../../bot/channel';
 import { runRegistrationWizard } from '../../bot/wizard';
 import type { Controls } from '../../commands';
 import { setSecret } from '../../config/keystore';
 import { paths } from '../../config/paths';
 import type { AppConfig } from '../../config/schema';
-import { isComplete, secretKeyForApp } from '../../config/schema';
+import { getAgentType, isComplete, secretKeyForApp } from '../../config/schema';
 import {
   buildEncryptedAccountConfig,
   ensureSecretsGetterWrapper,
@@ -76,12 +76,14 @@ export async function runStart(opts: StartOptions): Promise<void> {
 
   await preFlightChecks({ skipCheckLarkCli: opts.skipCheckLarkCli });
 
-  const agent = new CodexAdapter();
-  if (!(await agent.isAvailable())) {
-    console.error('✗ 未找到 Codex CLI。请先安装并登录 Codex：');
-    console.error('  https://developers.openai.com/codex/cli');
+  // Resolve the configured agent (preferences.agent.type, default codex)
+  // and verify its CLI exists before wiring the bridge.
+  const resolution = await resolveAgent(getAgentType(cfg));
+  if (resolution.error || !resolution.adapter) {
+    console.error(`✗ ${resolution.error ?? 'agent 不可用'}`);
     process.exit(1);
   }
+  const agent = resolution.adapter;
 
   const sessions = new SessionStore();
   await sessions.load();

@@ -19,9 +19,10 @@ import { renderText } from '../card/text-renderer';
 import { tryHandleCommand, type Controls } from '../commands';
 import type { AppConfig } from '../config/schema';
 import {
+  getAgentModel,
+  getAgentPermissionMode,
+  getAgentReasoningEffort,
   getAgentStopGraceMs,
-  getCodexPermissionMode,
-  getCodexReasoningEffort,
   getMaxConcurrentRuns,
   getMessageReplyMode,
   getRequireMentionInGroup,
@@ -516,8 +517,9 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
     prompt,
     sessionId: resumeFrom,
     cwd,
-    permissionMode: getCodexPermissionMode(controls.cfg),
-    reasoningEffort: getCodexReasoningEffort(controls.cfg),
+    model: getAgentModel(controls.cfg),
+    permissionMode: getAgentPermissionMode(controls.cfg),
+    reasoningEffort: getAgentReasoningEffort(controls.cfg),
     stopGraceMs: getAgentStopGraceMs(controls.cfg),
   });
   const handle = activeRuns.register(scope, run);

@@ -71,8 +71,32 @@ export type MessageReplyMode = 'card' | 'markdown' | 'text';
 export const CODEX_REASONING_EFFORTS = ['minimal', 'low', 'medium', 'high', 'xhigh'] as const;
 export type CodexReasoningEffort = (typeof CODEX_REASONING_EFFORTS)[number];
 
-export const CODEX_PERMISSION_MODES = ['default', 'acceptEdits', 'bypassPermissions', 'plan'] as const;
-export type CodexPermissionMode = (typeof CODEX_PERMISSION_MODES)[number];
+/**
+ * Bridge-level permission vocabulary (Claude-style names). Each adapter maps
+ * these onto its own CLI's flags (Codex: read-only/workspace-write/
+ * danger-full-access; Claude Code: --permission-mode; ...).
+ */
+export const AGENT_PERMISSION_MODES = ['default', 'acceptEdits', 'bypassPermissions', 'plan'] as const;
+export type AgentPermissionMode = (typeof AGENT_PERMISSION_MODES)[number];
+
+/** Legacy name kept so older imports keep compiling. */
+export const CODEX_PERMISSION_MODES = AGENT_PERMISSION_MODES;
+export type CodexPermissionMode = AgentPermissionMode;
+
+/**
+ * Which agent CLI the bridge spawns and its run knobs. `reasoningEffort` is
+ * an opaque string validated by the selected adapter (vocabularies differ:
+ * Codex minimal..xhigh, dsh off/low/high/max, ...). Unknown/invalid values
+ * are ignored by the adapter with a warning.
+ */
+export interface AgentConfig {
+  /** Adapter id from src/agent/registry. Default 'codex'. */
+  type?: string;
+  /** Model override handed to the adapter, if it supports one. */
+  model?: string;
+  permissionMode?: AgentPermissionMode;
+  reasoningEffort?: string;
+}
 
 /**
  * Access control settings. All three lists default to "no restriction" when
@@ -127,8 +151,18 @@ export interface AppPreferences {
    */
   runIdleTimeoutMinutes?: number;
   /**
+   * Agent selection and run knobs. When absent, falls back to the legacy
+   * `codexReasoningEffort` / `codexPermissionMode` fields below (and the
+   * 'codex' adapter).
+   */
+  agent?: AgentConfig;
+  /**
    * Optional bridge-scoped override for Codex CLI reasoning effort. When
    * unset, Codex inherits `model_reasoning_effort` from CODEX_HOME config.
+   *
+   * Legacy (pre-multi-agent) field — superseded by `agent.reasoningEffort`;
+   * kept as a read-fallback and written by nothing newer than /config's
+   * agent-section submit.
    */
   codexReasoningEffort?: CodexReasoningEffort;
   /**
@@ -136,6 +170,8 @@ export interface AppPreferences {
    * read-only sandbox. `acceptEdits` enables workspace-write for trusted
    * personal deployments. `bypassPermissions` maps to Codex
    * danger-full-access and should only be used briefly on a trusted machine.
+   *
+   * Legacy (pre-multi-agent) field — superseded by `agent.permissionMode`.
    */
   codexPermissionMode?: CodexPermissionMode;
   /**
@@ -292,7 +328,7 @@ export function isCodexReasoningEffort(value: unknown): value is CodexReasoningE
   return typeof value === 'string' && CODEX_REASONING_EFFORTS.includes(value as CodexReasoningEffort);
 }
 
-export function getCodexReasoningEffort(cfg: AppConfig): CodexReasoningEffort | undefined {
+export function getCodexReasoningEffort(cfg: Partial<AppConfig>): CodexReasoningEffort | undefined {
   const raw = cfg.preferences?.codexReasoningEffort;
   return isCodexReasoningEffort(raw) ? raw : undefined;
 }
@@ -301,7 +337,39 @@ export function isCodexPermissionMode(value: unknown): value is CodexPermissionM
   return typeof value === 'string' && CODEX_PERMISSION_MODES.includes(value as CodexPermissionMode);
 }
 
-export function getCodexPermissionMode(cfg: AppConfig): CodexPermissionMode | undefined {
+export function getCodexPermissionMode(cfg: Partial<AppConfig>): CodexPermissionMode | undefined {
   const raw = cfg.preferences?.codexPermissionMode;
   return isCodexPermissionMode(raw) ? raw : undefined;
+}
+
+/** Which adapter the bridge should spawn. Default 'codex'. */
+export function getAgentType(cfg: Partial<AppConfig>): string {
+  const raw = cfg.preferences?.agent?.type;
+  return typeof raw === 'string' && raw.trim() ? raw.trim() : 'codex';
+}
+
+/** Model override for the selected adapter, if configured. */
+export function getAgentModel(cfg: Partial<AppConfig>): string | undefined {
+  const raw = cfg.preferences?.agent?.model;
+  return typeof raw === 'string' && raw.trim() ? raw.trim() : undefined;
+}
+
+/**
+ * Permission mode for the selected adapter. Falls back to the legacy
+ * `codexPermissionMode` field when the agent section doesn't carry one.
+ */
+export function getAgentPermissionMode(cfg: Partial<AppConfig>): AgentPermissionMode | undefined {
+  const raw = cfg.preferences?.agent?.permissionMode;
+  if (isCodexPermissionMode(raw)) return raw;
+  return getCodexPermissionMode(cfg);
+}
+
+/**
+ * Reasoning effort for the selected adapter (opaque; the adapter validates).
+ * Falls back to the legacy `codexReasoningEffort` field.
+ */
+export function getAgentReasoningEffort(cfg: Partial<AppConfig>): string | undefined {
+  const raw = cfg.preferences?.agent?.reasoningEffort;
+  if (typeof raw === 'string' && raw.trim()) return raw.trim();
+  return getCodexReasoningEffort(cfg);
 }

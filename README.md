@@ -17,6 +17,7 @@ It does not require an OpenAI API key or a Claude API key. Codex runs through yo
 - Send Feishu / Lark messages to local `codex exec`.
 - Keep separate Codex sessions per chat or topic.
 - Stream replies as lightweight markdown cards or send one final text reply.
+- Render common LaTeX formulas from Codex as readable Unicode math in Feishu/Lark.
 - Use `/new [name]` to create a new group chat and inherit the current workspace.
 - Use `/reset` to clear the current chat session.
 - Switch and save workspaces with `/cd` and `/ws`.

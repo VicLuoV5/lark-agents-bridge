@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   createClaudeTranslatorState,
   translateClaudeEvent,
-} from '../src/agent/claude/stream-json';
+} from '../src/agent/cc-stream-json';
 
 function collect(lines: unknown[]): ReturnType<typeof Array.from> {
   const state = createClaudeTranslatorState();
@@ -21,6 +21,13 @@ describe('claude stream-json translation', () => {
     expect(events).toEqual([
       { type: 'system', sessionId: 'sess-1', model: 'claude-opus-5', cwd: '/w' },
     ]);
+  });
+
+  it('maps the qwen-style session_start header the same way', () => {
+    const events = collect([
+      { type: 'system', subtype: 'session_start', uuid: 'u1', session_id: 'q-sess-1' },
+    ]);
+    expect(events).toEqual([{ type: 'system', sessionId: 'q-sess-1', model: undefined, cwd: undefined }]);
   });
 
   it('emits streamed text deltas and suppresses the duplicate complete message', () => {

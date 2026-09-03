@@ -1,6 +1,9 @@
 import type { AgentAdapter } from './types';
 import { CodexAdapter } from './codex/adapter';
 import { ClaudeAdapter } from './claude/adapter';
+import { QwenAdapter } from './qwen/adapter';
+import { KimiAdapter } from './kimi/adapter';
+import { CodeBuddyAdapter } from './codebuddy/adapter';
 
 /** Runtime options an adapter may need from the active config. */
 export interface AgentCreateOptions {
@@ -32,6 +35,21 @@ const REGISTRY: Record<string, AgentRegistration> = {
     displayName: 'Claude Code',
     installHint: '未找到 Claude Code CLI。请先安装并登录 Claude Code：\n  https://code.claude.com/docs/en/quickstart',
     create: (opts) => new ClaudeAdapter({ provider: opts?.provider, apiKey: opts?.apiKey }),
+  },
+  qwen: {
+    displayName: 'Qwen Code',
+    installHint: '未找到 Qwen Code CLI。请先安装并登录 Qwen Code：\n  npm i -g @qwen-code/qwen-code\n  会话续接需要在 qwen 设置里开启 general.chatRecording',
+    create: () => new QwenAdapter(),
+  },
+  kimi: {
+    displayName: 'Kimi Code',
+    installHint: '未找到 Kimi Code CLI。请先安装并登录 Kimi Code（Windows 需 Git for Windows）：\n  npm i -g @moonshot-ai/kimi-code',
+    create: () => new KimiAdapter(),
+  },
+  codebuddy: {
+    displayName: 'CodeBuddy Code',
+    installHint: '未找到 CodeBuddy Code CLI。请先安装并登录（浏览器 OAuth 或 CODEBUDDY_API_KEY）：\n  npm i -g @tencent-ai/codebuddy-code',
+    create: () => new CodeBuddyAdapter(),
   },
 };
 

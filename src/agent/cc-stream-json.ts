@@ -1,4 +1,12 @@
-import type { AgentEvent } from '../types';
+import type { AgentEvent } from './types';
+
+/**
+ * Translator for the Claude Code stream-json dialect: newline-delimited
+ * `system`/`assistant`/`user`/`result` envelopes plus (with
+ * `--include-partial-messages`) `stream_event` delta wrappers. Shared by
+ * the claude, qwen, and codebuddy adapters — all three CLIs speak this
+ * shape (qwen's init line uses subtype `session_start` instead of `init`).
+ */
 
 interface ContentBlock {
   type?: string;
@@ -55,7 +63,7 @@ export function* translateClaudeEvent(
   if (!raw || typeof raw !== 'object') return;
   const evt = raw as RawEnvelope;
 
-  if (evt.type === 'system' && evt.subtype === 'init') {
+  if (evt.type === 'system' && (evt.subtype === 'init' || evt.subtype === 'session_start')) {
     yield { type: 'system', sessionId: evt.session_id, model: evt.model, cwd: evt.cwd };
     return;
   }
@@ -115,7 +123,7 @@ export function* translateClaudeEvent(
     if (evt.is_error) {
       yield {
         type: 'error',
-        message: evt.result?.trim() || `claude run failed (${evt.subtype ?? 'error'})`,
+        message: evt.result?.trim() || `agent run failed (${evt.subtype ?? 'error'})`,
       };
       return;
     }

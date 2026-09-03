@@ -32,8 +32,11 @@ The bridge spawns a local agent CLI; `preferences.agent.type` in `config.json` (
 |---|---|---|
 | `codex` (default) | `codex exec --json` | Your Codex login. |
 | `claude` | `claude -p --output-format stream-json` | Your Claude Code login, or an Anthropic-compatible provider endpoint (DeepSeek, 智谱 GLM, Kimi, Qwen 百炼, 火山方舟/豆包, MiniMax) selected via `/config`. |
+| `qwen` | `qwen -p --output-format stream-json` | Your Qwen Code login. Session resume needs `general.chatRecording=true` in qwen settings. |
+| `kimi` | `kimi -p --output-format stream-json` | Your Kimi Code login (Windows needs Git for Windows). Non-interactive runs use the CLI's `auto` permission; messages arrive whole (no token deltas). |
+| `codebuddy` | `codebuddy -p --output-format stream-json` | Your CodeBuddy OAuth login (or `CODEBUDDY_API_KEY`). |
 
-Provider API keys are stored in the encrypted local keystore (`secrets.enc`), never in `config.json` or logs. Provider endpoints/models move quickly — treat the built-in profiles as defaults and override the model id via `/config` when a vendor renames things.
+Every adapter injects the same bridge conventions and the local `lark-cli` shim, so each agent can operate Feishu (messages, docs, interactive cards) exactly like Codex. Provider API keys are stored in the encrypted local keystore (`secrets.enc`), never in `config.json` or logs. Provider endpoints/models move quickly — treat the built-in profiles as defaults and override the model id via `/config` when a vendor renames things. The Kimi adapter is based on an undocumented output schema; if a Kimi Code release changes its stream format, the adapter may need a matching update.
 
 ## Requirements
 

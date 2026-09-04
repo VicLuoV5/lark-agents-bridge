@@ -112,6 +112,19 @@ export function buildInstallCommand(launcherPath: string): string {
   ].join(' ');
 }
 
+const ACCESS_DENIED_RE = /0x80070005|拒绝访问|access is denied|access denied/i;
+
+export const ELEVATION_GUIDANCE =
+  '\n\n这台机器注册登录任务需要一次管理员权限（UAC 限制，两条注册通道都会被拒）。' +
+  '一次性解决：右键 PowerShell「以管理员身份运行」→ 进入本项目目录 → 再执行一次 `start`。' +
+  '注册成功后不再需要管理员——开机自启、崩溃自愈全自动。';
+
+/** Append elevation guidance when both registration paths were denied. */
+export function withAccessDeniedGuidance(r: SchtasksResult): SchtasksResult {
+  if (r.ok || !ACCESS_DENIED_RE.test(r.stderr + r.stdout)) return r;
+  return { ...r, stderr: r.stderr + ELEVATION_GUIDANCE };
+}
+
 /**
  * Register the logon task WITHOUT admin rights. `schtasks /SC ONLOGON`
  * requires an elevated console on modern Windows (拒绝访问 for normal
@@ -156,7 +169,7 @@ export async function installTask(): Promise<SchtasksResult> {
     '/TR',
     `"${windowsLauncherCmdPath()}"`,
   ]);
-  return legacy.ok ? legacy : viaPowerShell;
+  return withAccessDeniedGuidance(legacy.ok ? legacy : viaPowerShell);
 }
 
 /** Start the task now (regardless of trigger). */

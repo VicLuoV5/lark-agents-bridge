@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   buildInstallCommand,
   decodeConsoleOutput,
+  withAccessDeniedGuidance,
 } from '../src/daemon/schtasks';
 
 describe('windows service install (non-admin Register-ScheduledTask)', () => {
@@ -31,5 +32,20 @@ describe('windows service install (non-admin Register-ScheduledTask)', () => {
   it('passes clean UTF-8 through unchanged', () => {
     const utf8 = Buffer.from('成功创建计划任务', 'utf8');
     expect(decodeConsoleOutput(utf8)).toBe('成功创建计划任务');
+  });
+
+  it('appends elevation guidance when registration is access-denied', () => {
+    const denied = { ok: false, stdout: '', stderr: 'Register-ScheduledTask : 拒绝访问。 HRESULT 0x80070005' };
+    const guided = withAccessDeniedGuidance(denied);
+    expect(guided.ok).toBe(false);
+    expect(guided.stderr).toContain('以管理员身份运行');
+    expect(guided.stderr).toContain('不再需要管理员');
+  });
+
+  it('leaves unrelated failures and successes untouched', () => {
+    const unrelated = { ok: false, stdout: '', stderr: '参数无效' };
+    expect(withAccessDeniedGuidance(unrelated)).toBe(unrelated);
+    const ok = { ok: true, stdout: '', stderr: '' };
+    expect(withAccessDeniedGuidance(ok)).toBe(ok);
   });
 });

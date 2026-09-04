@@ -1,4 +1,4 @@
-# lark-codex-bridge
+# lark-agents-bridge
 
 把飞书 / Lark 聊天消息转发给本机 Codex CLI 的本地 bot。适合已经在本机登录并使用 Codex CLI，希望从飞书聊天里触发同一套本地 Codex 能力的个人或小团队。
 
@@ -57,8 +57,8 @@ Windows 上如果用户名包含中文或空格，Codex 沙箱可能无法稳定
 从 npm 安装：
 
 ```bash
-npm i -g @vicluo/lark-codex-bridge
-lark-codex-bridge --version
+npm i -g lark-agents-bridge
+lark-agents-bridge --version
 ```
 
 从源码运行：
@@ -67,7 +67,7 @@ lark-codex-bridge --version
 corepack enable
 corepack pnpm install
 corepack pnpm build
-node bin/lark-codex-bridge.mjs --help
+node bin/lark-agents-bridge.mjs --help
 ```
 
 ## 首次运行
@@ -75,13 +75,13 @@ node bin/lark-codex-bridge.mjs --help
 前台启动：
 
 ```bash
-lark-codex-bridge run
+lark-agents-bridge run
 ```
 
 源码目录里也可以这样跑：
 
 ```bash
-node bin/lark-codex-bridge.mjs run
+node bin/lark-agents-bridge.mjs run
 ```
 
 首次运行会创建 `~/.feishu-codex-bridge/config.json`。如果没有应用凭据，会进入二维码注册向导。新的 App Secret 会立即迁移到本地加密 keystore：`~/.feishu-codex-bridge/secrets.enc`。
@@ -122,19 +122,19 @@ Reply exactly OK
 前台进程命令：
 
 ```bash
-lark-codex-bridge run [-c <config>]
-lark-codex-bridge ps
-lark-codex-bridge kill <id|#>
+lark-agents-bridge run [-c <config>]
+lark-agents-bridge ps
+lark-agents-bridge kill <id|#>
 ```
 
 后台服务命令：
 
 ```bash
-lark-codex-bridge start
-lark-codex-bridge stop
-lark-codex-bridge restart
-lark-codex-bridge status
-lark-codex-bridge unregister
+lark-agents-bridge start
+lark-agents-bridge stop
+lark-agents-bridge restart
+lark-agents-bridge status
+lark-agents-bridge unregister
 ```
 
 服务后端：

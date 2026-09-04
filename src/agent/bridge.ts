@@ -7,9 +7,9 @@ import { workspaceRoot } from '../workspace/guard';
  * Agent-agnostic on purpose — this is the bridge's contract with whatever
  * CLI it spawns. Adapter-specific additions belong in the adapter.
  */
-const BRIDGE_PROMPT = `# feishu-codex-bridge 运行约定
+const BRIDGE_PROMPT = `# lark-agents-bridge 运行约定
 
-你正在 feishu-codex-bridge 里运行：飞书/Lark 用户消息会被桥接到本地的 agent CLI。
+你正在 lark-agents-bridge（原名 feishu-codex-bridge）里运行：飞书/Lark 用户消息会被桥接到本地的 agent CLI。
 
 ## bridge_context
 每条 user message 顶部可能带一个 <bridge_context> 块，包含 chat_id、chat_type、sender_id、sender_name、thread_id。

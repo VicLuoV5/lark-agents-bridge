@@ -1,10 +1,11 @@
 {
-  "name": "@vicluo/lark-codex-bridge",
+  "name": "lark-agents-bridge",
   "version": "0.1.34",
-  "description": "Bridge Feishu/Lark messenger with the local Codex CLI",
+  "description": "Bridge Feishu/Lark messenger with local coding agent CLIs (Codex, Claude Code, Qwen Code, Kimi Code, CodeBuddy, DeepSeek Harness)",
   "packageManager": "pnpm@10.0.0",
   "type": "module",
   "bin": {
+    "lark-agents-bridge": "bin/lark-agents-bridge.mjs",
     "lark-codex-bridge": "bin/lark-codex-bridge.mjs",
     "feishu-codex-bridge": "bin/feishu-codex-bridge.mjs"
   },
@@ -59,8 +60,14 @@
   "keywords": [
     "feishu",
     "lark",
+    "agents",
     "codex",
     "codex-cli",
+    "claude-code",
+    "qwen-code",
+    "kimi-code",
+    "codebuddy",
+    "deepseek-harness",
     "feishu-bot",
     "lark-bot",
     "bridge"

@@ -1,4 +1,4 @@
-# lark-codex-bridge
+# lark-agents-bridge
 
 A local Feishu / Lark bot that forwards chat messages to your local Codex CLI. It is designed for people who already use Codex on their own machine and want to trigger the same local agent from Feishu or Lark chats.
 
@@ -57,8 +57,8 @@ On Windows, Codex sandbox commands may not reliably resolve global npm paths whe
 From npm:
 
 ```bash
-npm i -g @vicluo/lark-codex-bridge
-lark-codex-bridge --version
+npm i -g lark-agents-bridge
+lark-agents-bridge --version
 ```
 
 From source:
@@ -67,7 +67,7 @@ From source:
 corepack enable
 corepack pnpm install
 corepack pnpm build
-node bin/lark-codex-bridge.mjs --help
+node bin/lark-agents-bridge.mjs --help
 ```
 
 ## First Run
@@ -75,13 +75,13 @@ node bin/lark-codex-bridge.mjs --help
 Run the bridge in the foreground:
 
 ```bash
-lark-codex-bridge run
+lark-agents-bridge run
 ```
 
 Or from a source checkout:
 
 ```bash
-node bin/lark-codex-bridge.mjs run
+node bin/lark-agents-bridge.mjs run
 ```
 
 On first run the bridge creates `~/.feishu-codex-bridge/config.json`. If no app credentials are present, it starts the QR-code registration wizard. Fresh App Secrets are moved into the encrypted local keystore at `~/.feishu-codex-bridge/secrets.enc`.
@@ -122,19 +122,19 @@ Optional event subscriptions:
 Foreground process commands:
 
 ```bash
-lark-codex-bridge run [-c <config>]
-lark-codex-bridge ps
-lark-codex-bridge kill <id|#>
+lark-agents-bridge run [-c <config>]
+lark-agents-bridge ps
+lark-agents-bridge kill <id|#>
 ```
 
 Background service commands:
 
 ```bash
-lark-codex-bridge start
-lark-codex-bridge stop
-lark-codex-bridge restart
-lark-codex-bridge status
-lark-codex-bridge unregister
+lark-agents-bridge start
+lark-agents-bridge stop
+lark-agents-bridge restart
+lark-agents-bridge status
+lark-agents-bridge unregister
 ```
 
 Service backends:

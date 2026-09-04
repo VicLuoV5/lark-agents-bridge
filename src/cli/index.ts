@@ -20,7 +20,7 @@ import { runStart } from './commands/start';
 const program = new Command();
 
 program
-  .name('lark-codex-bridge')
+  .name('lark-agents-bridge')
   .description('Bridge Feishu/Lark messenger with local Codex')
   .version(pkg.version, '-v, --version');
 

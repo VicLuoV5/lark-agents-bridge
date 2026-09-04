@@ -79,6 +79,19 @@ export type CodexReasoningEffort = (typeof CODEX_REASONING_EFFORTS)[number];
 export const AGENT_PERMISSION_MODES = ['default', 'acceptEdits', 'bypassPermissions', 'plan'] as const;
 export type AgentPermissionMode = (typeof AGENT_PERMISSION_MODES)[number];
 
+/**
+ * Agent ids allowed in `preferences.agent.type` — the config vocabulary.
+ * Must stay in sync with src/agent/registry's REGISTRY keys (a test guards
+ * this); the registry owns the implementations, this list owns the config
+ * surface so the card/command layers never import from src/agent.
+ */
+export const AGENT_TYPES = ['codex', 'claude', 'qwen', 'kimi', 'codebuddy', 'dsh'] as const;
+export type AgentType = (typeof AGENT_TYPES)[number];
+
+export function isAgentType(value: unknown): value is AgentType {
+  return typeof value === 'string' && (AGENT_TYPES as readonly string[]).includes(value);
+}
+
 /** Legacy name kept so older imports keep compiling. */
 export const CODEX_PERMISSION_MODES = AGENT_PERMISSION_MODES;
 export type CodexPermissionMode = AgentPermissionMode;

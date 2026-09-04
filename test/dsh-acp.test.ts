@@ -51,6 +51,8 @@ class FakeAcpServer {
   promptScript: { updates: unknown[]; stopReason: string } = { updates: [], stopReason: 'end_turn' };
   /** When set, session/prompt is left unanswered until releasePrompt(). */
   holdPrompt = false;
+  /** When set, session/resume fails (stale session id). */
+  failResume = false;
   private heldPromptId: number | undefined;
   private pendingPromptSession: string | undefined;
   private out: PassThrough;
@@ -107,6 +109,12 @@ class FakeAcpServer {
         return;
       }
       case 'session/resume':
+        if (this.failResume) {
+          this.out.write(
+            `${JSON.stringify({ jsonrpc: '2.0', id: msg.id, error: { code: -32000, message: 'session not found' } })}\n`,
+          );
+          return;
+        }
         this.respond(msg.id, { configOptions: CONFIG_OPTIONS });
         return;
       case 'session/list':
@@ -323,6 +331,17 @@ describe('dsh adapter over a fake ACP server', () => {
     expect(entries[0]).toMatchObject({ sessionId: 'sess-9', preview: '(dsh 会话)' });
     const other = await adapter.history.list('D:\\other');
     expect(other).toEqual([]);
+  });
+
+  it('falls back to a fresh session when a stored id cannot be resumed', { timeout: 20_000 }, async () => {
+    const server = new FakeAcpServer();
+    server.failResume = true;
+    const adapter = makeAdapter(server);
+    const events = await collect(adapter.run({ prompt: 'hi', sessionId: 'stale-1' }).events);
+    expect(server.inbound.some((f) => f.method === 'session/resume')).toBe(true);
+    expect(server.inbound.some((f) => f.method === 'session/new')).toBe(true);
+    expect(events[0]).toMatchObject({ type: 'system', sessionId: 'sess-1' });
+    expect(events.at(-1)).toMatchObject({ type: 'done', sessionId: 'sess-1' });
   });
 
   it('applies model and reasoning_effort config options when they resolve', { timeout: 20_000 }, async () => {

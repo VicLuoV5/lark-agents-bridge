@@ -1,5 +1,6 @@
 import {
   AGENT_PERMISSION_MODES,
+  AGENT_TYPES,
   type AgentPermissionMode,
   type MessageReplyMode,
 } from '../config/schema';
@@ -23,6 +24,8 @@ export interface ConfigFormOpts {
   /** undefined / 'anthropic' = the user's own Claude login. */
   agentProvider?: string;
   agentModel?: string;
+  /** Active agent id — the select's current value. */
+  agentType?: string;
   requireMentionInGroup: boolean;
   /** Comma-separated open_id allowlist; empty string = unrestricted. */
   allowedUsers: string;
@@ -113,6 +116,21 @@ export function configFormCard(opts: ConfigFormOpts): object {
               default_value: String(opts.runIdleTimeoutMinutes),
               placeholder: { tag: 'plain_text', content: '0' },
               input_type: 'text',
+            },
+            {
+              tag: 'markdown',
+              content:
+                '\n**Agent**（要桥接的 CLI）\n' +
+                '_切换保存后立即生效;各家的登录/认证按其官方方式自备,与桥无关_',
+            },
+            {
+              tag: 'select_static',
+              name: 'agent_type',
+              initial_option: opts.agentType ?? 'codex',
+              options: AGENT_TYPES.map((value) => ({
+                text: { tag: 'plain_text', content: value },
+                value,
+              })),
             },
             // Reasoning effort is adapter-specific: only shown when the
             // active adapter exposes a vocabulary (undefined = no knob).
@@ -352,6 +370,7 @@ export function configSavedCard(
             `**工具调用显示**:\`${opts.showToolCalls ? 'show' : 'hide'}\`\n` +
             `**并发上限**:\`${opts.maxConcurrentRuns}\`\n` +
             `**run 探活**:\`${opts.runIdleTimeoutMinutes > 0 ? `${opts.runIdleTimeoutMinutes} 分钟` : '关闭'}\`\n` +
+            `**Agent**:\`${opts.agentType ?? 'codex'}\`\n` +
             `**模型供应商**:${providerLabel}${opts.agentProviderNote ? `\n_ℹ️ ${opts.agentProviderNote}_` : ''}${keyLine}\n` +
             `**模型**:\`${opts.agentModel ?? '默认'}\`\n` +
             `**推理强度**:\`${opts.agentReasoningEffort ?? '默认'}\`\n` +

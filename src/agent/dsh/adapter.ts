@@ -162,7 +162,23 @@ export class DshAdapter implements AgentAdapter {
         configOptions = conn.getConfigOptions(sessionId) ?? [];
         // Already alive in this subprocess — prompt directly.
       } else if (sessionId) {
-        configOptions = await conn.resumeSession(sessionId, cwd);
+        try {
+          configOptions = await conn.resumeSession(sessionId, cwd);
+        } catch (err) {
+          // Stale id (e.g. sessions carried over from a different agent
+          // after a /config switch, or a wiped dsh home) — fall back to a
+          // fresh session instead of failing the run. The system event
+          // below persists the new id, so this heals itself.
+          log.warn('agent', 'acp-resume-stale', {
+            agent: this.id,
+            sessionId,
+            detail: err instanceof Error ? err.message : String(err),
+          });
+          sessionId = undefined;
+          const created = await conn.newSession(cwd);
+          sessionId = created.sessionId;
+          configOptions = created.configOptions;
+        }
       } else {
         const created = await conn.newSession(cwd);
         sessionId = created.sessionId;

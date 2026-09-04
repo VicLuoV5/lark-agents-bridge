@@ -14,16 +14,19 @@ import { forgetManagedCard, sendManagedCard, updateManagedCard } from '../card/m
 import { helpCard, resumeCard, statusCard, workspacesCard } from '../card/templates';
 import type { AgentConfig, AppConfig, MessageReplyMode, SecretInput, TenantBrand } from '../config/schema';
 import {
+  getAgentApiKeyRef,
   getAgentModel,
   getAgentPermissionMode,
   getAgentProvider,
   getAgentReasoningEffort,
   getAgentStopGraceMs,
+  getAgentType,
   getMaxConcurrentRuns,
   getMessageReplyMode,
   getRequireMentionInGroup,
   getRunIdleTimeoutMs,
   getShowToolCalls,
+  isAgentType,
   isCodexPermissionMode,
   isAdmin,
   secretKeyForApp,
@@ -394,7 +397,7 @@ async function handleResume(args: string, ctx: CommandContext): Promise<void> {
 async function applyResume(sessionId: string, ctx: CommandContext): Promise<void> {
   const cwd = ctx.workspaces.cwdFor(ctx.scope) ?? workspaceRoot();
   ctx.activeRuns.interrupt(ctx.scope);
-  ctx.sessions.set(ctx.scope, sessionId, cwd);
+  ctx.sessions.set(ctx.scope, sessionId, cwd, ctx.agent.id);
   await reply(
     ctx,
     `✓ 已恢复会话 \`${sessionId.slice(0, 8)}…\`。接着发消息就行。`,
@@ -923,6 +926,7 @@ async function showConfigForm(ctx: CommandContext): Promise<void> {
     runIdleTimeoutMinutes: ms ? Math.round(ms / 60_000) : 0,
     agentReasoningEffort: getAgentReasoningEffort(ctx.controls.cfg),
     effortOptions: ctx.agent.effortOptions ? [...ctx.agent.effortOptions] : undefined,
+    agentType: getAgentType(ctx.controls.cfg),
     agentPermissionMode: getAgentPermissionMode(ctx.controls.cfg),
     agentProvider: getAgentProvider(ctx.controls.cfg),
     agentModel: getAgentModel(ctx.controls.cfg),
@@ -1010,6 +1014,18 @@ async function submitConfig(ctx: CommandContext): Promise<void> {
   } else if (isCodexPermissionMode(rawPermissionMode)) {
     agentPermissionMode = rawPermissionMode;
   }
+
+  // Agent type switch. The config vocabulary (AGENT_TYPES) is validated
+  // here; the registry stays the source of implementations. Takes effect
+  // through the standard post-save restart, which re-resolves the adapter.
+  const rawAgentType = String(fv.agent_type ?? '').trim();
+  const nextAgentType = isAgentType(rawAgentType) ? rawAgentType : getAgentType(ctx.controls.cfg);
+  // Adapter identity lives in the spawned agent instance, not in per-run
+  // config reads — a change here needs controls.restart() to take effect.
+  // Snapshot BEFORE the config object below is mutated in place.
+  const prevAgentType = getAgentType(ctx.controls.cfg);
+  const prevProvider = getAgentProvider(ctx.controls.cfg);
+  const prevKeyRefId = (getAgentApiKeyRef(ctx.controls.cfg) as { id?: unknown } | undefined)?.id;
 
   // Provider / model / provider API key (claude adapter). Empty key input =
   // keep whatever is configured; switching back to 官方登录 drops the ref.
@@ -1130,7 +1146,7 @@ async function submitConfig(ctx: CommandContext): Promise<void> {
       maxConcurrentRuns,
       runIdleTimeoutMinutes,
       agent: {
-        type: prevAgent.type,
+        type: nextAgentType,
         provider: agentProvider,
         model: agentModel,
         reasoningEffort: agentReasoningEffort,
@@ -1162,6 +1178,7 @@ async function submitConfig(ctx: CommandContext): Promise<void> {
       showToolCalls,
       maxConcurrentRuns,
       runIdleTimeoutMinutes,
+      agentType: nextAgentType,
       agentProvider: agentProvider ?? 'anthropic',
       agentModel: agentModel ?? 'default',
       agentKeyConfigured,
@@ -1181,6 +1198,7 @@ async function submitConfig(ctx: CommandContext): Promise<void> {
         showToolCalls,
         maxConcurrentRuns,
         runIdleTimeoutMinutes,
+        agentType: nextAgentType,
         agentProvider,
         agentProviderNote,
         agentKeyConfigured,
@@ -1195,6 +1213,24 @@ async function submitConfig(ctx: CommandContext): Promise<void> {
     ).catch((err) =>
       log.warn('command', 'config-save-update-failed', { err: String(err) }),
     );
+
+    // Adapter-identity changes (agent type / provider / provider key) only
+    // take effect through a restart — the run path reads config per-run, but
+    // the adapter instance itself was resolved at start/restart time.
+    const newKeyRefId = (agentApiKeyRef as { id?: unknown } | undefined)?.id;
+    const agentIdentityChanged =
+      nextAgentType !== prevAgentType ||
+      agentProvider !== prevProvider ||
+      newKeyRefId !== prevKeyRefId;
+    if (agentIdentityChanged) {
+      log.info('command', 'config-agent-restart', { from: prevAgentType, to: nextAgentType });
+      try {
+        await ctx.controls.restart();
+      } catch (err) {
+        log.warn('command', 'config-agent-restart-failed', { err: String(err) });
+        await reply(ctx, `⚠️ 配置已保存，但切换 agent 重连失败：${err instanceof Error ? err.message : String(err)}`).catch(() => {});
+      }
+    }
     forgetManagedCard(formMsgId);
   })();
 }

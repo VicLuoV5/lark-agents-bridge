@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { buildArgs } from '../src/agent/codex/adapter';
-import { resolveAgent } from '../src/agent/registry';
+import { knownAgentTypes, resolveAgent } from '../src/agent/registry';
 import {
+  AGENT_TYPES,
   getAgentModel,
   getAgentPermissionMode,
   getAgentReasoningEffort,
@@ -66,5 +67,12 @@ describe('agent registry', () => {
     expect(r.adapter).toBeUndefined();
     expect(r.error).toContain('未知的 agent 类型');
     expect(r.error).toContain('codex');
+  });
+
+  it('keeps the AGENT_TYPES config vocabulary in sync with the registry', () => {
+    // schema owns the config surface (the card/agent layers read AGENT_TYPES);
+    // the registry owns implementations. Drift between them would let /config
+    // save an agent type that can't resolve (or hide an existing one).
+    expect([...knownAgentTypes()].sort()).toEqual([...AGENT_TYPES].sort());
   });
 });

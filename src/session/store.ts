@@ -9,6 +9,10 @@ export interface SessionEntry {
   sessionId?: string;
   /** Pinned cwd for the resumable session. Absent for the same reason. */
   cwd?: string;
+  /** Agent runtime that created this session. Session ids are agent-scoped —
+   * a codex session id means nothing to dsh and vice versa. Absent on legacy
+   * entries from the codex-only era, read back as 'codex'. */
+  agent?: string;
   updatedAt: number;
   /** Per-scope idle-timeout override (minutes). 0 = explicitly off for this
    * scope, undefined = follow global default. /new clears the whole entry,
@@ -41,6 +45,7 @@ export class SessionStore {
         // the full pair; but a bare timeout override is fine on its own.
         const sessionId = typeof entry.sessionId === 'string' ? entry.sessionId : undefined;
         const cwd = typeof entry.cwd === 'string' ? entry.cwd : undefined;
+        const agent = typeof entry.agent === 'string' ? entry.agent : undefined;
         const idleTimeoutMinutes =
           typeof entry.idleTimeoutMinutes === 'number' ? entry.idleTimeoutMinutes : undefined;
         const hasSession = sessionId !== undefined && cwd !== undefined;
@@ -48,6 +53,7 @@ export class SessionStore {
         this.data[chatId] = {
           ...(sessionId !== undefined ? { sessionId } : {}),
           ...(cwd !== undefined ? { cwd } : {}),
+          ...(agent !== undefined ? { agent } : {}),
           updatedAt: entry.updatedAt,
           ...(idleTimeoutMinutes !== undefined ? { idleTimeoutMinutes } : {}),
         };
@@ -59,14 +65,18 @@ export class SessionStore {
   }
 
   /**
-   * Return the session id for this chat if it was created in the given cwd.
-   * Sessions recorded in a different cwd are stale — Codex can't resume
-   * them from a different working directory.
+   * Return the session id for this chat if it was created in the given cwd
+   * by the given agent runtime. Sessions recorded in a different cwd are
+   * stale (the CLI can't resume across working directories), and sessions
+   * from a different agent are equally meaningless — ids don't transfer
+   * across runtimes. Legacy entries without an agent field predate
+   * multi-agent support and were all codex.
    */
-  resumeFor(chatId: string, cwd: string): string | undefined {
+  resumeFor(chatId: string, cwd: string, agentId = 'codex'): string | undefined {
     const entry = this.data[chatId];
     if (!entry) return undefined;
     if (entry.cwd !== cwd) return undefined;
+    if ((entry.agent ?? 'codex') !== agentId) return undefined;
     return entry.sessionId;
   }
 
@@ -74,13 +84,14 @@ export class SessionStore {
     return this.data[chatId];
   }
 
-  set(chatId: string, sessionId: string, cwd: string): void {
+  set(chatId: string, sessionId: string, cwd: string, agentId = 'codex'): void {
     // Preserve idleTimeoutMinutes across run starts — it's a per-scope
     // preference, not per-run-instance state. /new (clear) wipes it.
     const prev = this.data[chatId];
     this.data[chatId] = {
       sessionId,
       cwd,
+      agent: agentId,
       updatedAt: Date.now(),
       ...(prev?.idleTimeoutMinutes !== undefined
         ? { idleTimeoutMinutes: prev.idleTimeoutMinutes }

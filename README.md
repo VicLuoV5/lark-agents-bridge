@@ -17,7 +17,7 @@ The bridge itself needs no API keys: every agent runs through its own login or c
 - Send Feishu / Lark messages to a local agent CLI (Codex by default; Claude Code, Qwen Code, Kimi Code, CodeBuddy, and DeepSeek Harness also supported).
 - Keep separate agent sessions per chat or topic.
 - Stream replies as lightweight markdown cards or send one final text reply.
-- Render common LaTeX formulas from Codex as readable Unicode math in Feishu/Lark.
+- Render common LaTeX formulas from agent replies as readable Unicode math in Feishu/Lark.
 - Use `/new [name]` to create a new group chat and inherit the current workspace.
 - Use `/reset` to clear the current chat session.
 - Switch and save workspaces with `/cd` and `/ws`.
@@ -45,11 +45,11 @@ The `dsh` adapter runs DeepSeek Harness as one long-lived ACP subprocess shared 
 ## Requirements
 
 - Node.js 20 or newer.
-- A working local Codex CLI login. Run `codex login` in your normal terminal first.
+- The default agent (Codex) needs a working local CLI login: run `codex login` in your normal terminal. Other agents need their own credentials per their docs.
 - A Feishu / Lark PersonalAgent app.
 - Network access to OpenAI/Codex and Feishu/Lark open platform endpoints.
 
-The first run can guide you through app registration by QR code. `lark-cli` is optional but recommended; the bridge uses it so Codex can call Feishu/Lark APIs from local tool runs.
+The first run can guide you through app registration by QR code. `lark-cli` is optional but recommended; the bridge uses it so agents can call Feishu/Lark APIs from local tool runs.
 
 On Windows, Codex sandbox commands may not reliably resolve global npm paths when the user profile path contains non-ASCII characters or spaces. The bridge creates a workspace-local `.feishu-codex-bridge-tools/` runtime shim and keeps it synchronized from the globally installed `@larksuite/cli` version and binary metadata.
 
@@ -152,17 +152,17 @@ Do not start two bridge processes for the same Feishu/Lark app. Open-platform lo
 |---|---|
 | `/new [name]` | Create a new group chat, start a fresh session, inherit current cwd, invite sender |
 | `/reset` | Clear the current chat session |
-| `/resume [N]` | List recent Codex sessions for the current cwd |
+| `/resume [N]` | List recent sessions of the active agent for the current cwd |
 | `/cd <path>` | Switch cwd within `FEISHU_CODEX_WORKSPACE_ROOT` and reset session |
 | `/ws list/save/use/remove` | Manage named workspaces |
 | `/status` | Show current scope, cwd, session, agent, and reasoning setting |
 | `/config` | Configure reply mode, tool display, concurrency, timeout, reasoning effort, and access control |
 | `/timeout [N\|off\|default]` | Override idle timeout for the current session |
-| `/stop` | Stop the current Codex run |
+| `/stop` | Stop the current agent run |
 | `/ps` | List bridge processes on this host |
 | `/exit <id\|#>` | Stop one bridge process |
 | `/reconnect` | Force a Feishu/Lark WebSocket reconnect |
-| `/doctor [description]` | Ask Codex to diagnose recent bridge logs |
+| `/doctor [description]` | Ask the active agent to diagnose recent bridge logs |
 | `/account` | View or rotate app credentials |
 | `/help` | Show the help card |
 
@@ -199,7 +199,7 @@ Important environment variables:
 - Restrict `FEISHU_CODEX_WORKSPACE_ROOT` to the smallest directory tree the bot should access.
 - Set `/config` admins before inviting the bot into shared groups.
 - In groups, keep "require mention" enabled unless you deliberately want all group messages sent to Codex.
-- `/doctor` sanitizes logs before sending them to Codex, but logs may still contain operational metadata. Use it in trusted chats.
+- `/doctor` sanitizes logs before sending them to the active agent, but logs may still contain operational metadata. Use it in trusted chats.
 
 ## Development
 

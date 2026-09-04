@@ -17,7 +17,7 @@
 - 把飞书 / Lark 消息发送给本机 agent CLI（默认 Codex，也支持 Claude Code、Qwen Code、Kimi Code、CodeBuddy、DeepSeek Harness）。
 - 每个 chat 或话题维护独立 agent session。
 - 支持轻量流式 markdown 卡片，也支持跑完后一次性发文本。
-- 将 Codex 常见的 LaTeX 公式转换为飞书 / Lark 可读的 Unicode 数学文本。
+- 将 agent 回复里常见的 LaTeX 公式转换为飞书 / Lark 可读的 Unicode 数学文本。
 - `/new [name]` 创建新群、新会话，并继承当前工作目录。
 - `/reset` 清空当前 chat 会话。
 - `/cd` 和 `/ws` 切换、保存工作空间。
@@ -45,11 +45,11 @@ bridge 会 spawn 一个本地 agent CLI，由 `config.json` 里的 `preferences.
 ## 前置条件
 
 - Node.js 20 或更新版本。
-- 本机 Codex CLI 可用且已登录。先在普通终端运行 `codex login`。
+- 默认 agent 是 Codex：需要本机 Codex CLI 已登录（普通终端跑 `codex login`）。用其他 agent 时换成对应的登录/凭据。
 - 一个飞书 / Lark PersonalAgent 应用。
 - 能访问 OpenAI/Codex 以及飞书 / Lark 开放平台网络。
 
-首次运行可以通过二维码向导创建或绑定应用。`lark-cli` 不是普通聊天的硬依赖，但建议安装；Codex 需要操作飞书文档、消息、日历等 API 时会用到它。
+首次运行可以通过二维码向导创建或绑定应用。`lark-cli` 不是普通聊天的硬依赖，但建议安装；agent 需要操作飞书文档、消息、日历等 API 时会用到它。
 
 Windows 上如果用户名包含中文或空格，Codex 沙箱可能无法稳定解析全局 npm 路径。bridge 会在工作区根目录生成 `.feishu-codex-bridge-tools/` 作为运行时 shim，并根据全局 `@larksuite/cli` 的版本和二进制元数据自动同步。
 
@@ -152,17 +152,17 @@ lark-agents-bridge unregister
 |---|---|
 | `/new [name]` | 创建新群和新会话，继承当前 cwd，并邀请发送者 |
 | `/reset` | 清空当前 chat 会话 |
-| `/resume [N]` | 列出当前 cwd 下最近的 Codex sessions |
+| `/resume [N]` | 列出当前 agent 在当前 cwd 下最近的会话 |
 | `/cd <path>` | 在 `FEISHU_CODEX_WORKSPACE_ROOT` 内切换 cwd，并重置 session |
 | `/ws list/save/use/remove` | 管理命名工作空间 |
 | `/status` | 查看 scope、cwd、session、agent 和 reasoning 设置 |
 | `/config` | 配置回复方式、工具显示、并发、timeout、reasoning effort 和访问控制 |
 | `/timeout [N\|off\|default]` | 覆盖当前 session 的 idle timeout |
-| `/stop` | 停止当前 Codex run |
+| `/stop` | 停止当前 agent run |
 | `/ps` | 列出本机 bridge 进程 |
 | `/exit <id\|#>` | 停止一个 bridge 进程 |
 | `/reconnect` | 强制重连飞书 / Lark WebSocket |
-| `/doctor [描述]` | 让 Codex 根据近期 bridge 日志自助诊断 |
+| `/doctor [描述]` | 让当前 agent 根据近期 bridge 日志自助诊断 |
 | `/account` | 查看或更换应用凭据 |
 | `/help` | 帮助卡片 |
 
@@ -176,12 +176,12 @@ lark-agents-bridge unregister
 |---|---|
 | `~/.feishu-codex-bridge/config.json` | 应用配置和偏好 |
 | `~/.feishu-codex-bridge/secrets.enc` | 加密 App Secret |
-| `~/.feishu-codex-bridge/sessions.json` | chat/topic 到 Codex session 的映射 |
+| `~/.feishu-codex-bridge/sessions.json` | chat/topic 到 agent session 的映射（按 agent 隔离） |
 | `~/.feishu-codex-bridge/workspaces.json` | 命名工作空间 |
 | `~/.feishu-codex-bridge/processes.json` | 运行中进程注册表 |
 | `~/.feishu-codex-bridge/media/<chatId>/` | 附件下载缓存 |
 | `~/.feishu-codex-bridge/logs/YYYY-MM-DD.log` | JSONL 结构化日志 |
-| `<workspace-root>/.feishu-codex-bridge-tools/` | Windows 下给 Codex 使用的 `lark-cli` 运行时 shim；由全局 `@larksuite/cli` 自动同步，不要手工编辑或提交 |
+| `<workspace-root>/.feishu-codex-bridge-tools/` | Windows 下给 agent 使用的 `lark-cli` 运行时 shim；由全局 `@larksuite/cli` 自动同步，不要手工编辑或提交 |
 
 重要环境变量：
 
@@ -191,15 +191,15 @@ lark-agents-bridge unregister
 | `CODEX_BIN` | 自定义 Codex 可执行文件路径。 |
 | `FEISHU_CODEX_WORKSPACE_ROOT` | bot 允许 `/cd` 的最大文件系统根目录，默认是 bridge 进程 cwd。 |
 | `FEISHU_CODEX_BRIDGE_PROXY` | Windows helper 脚本使用的可选代理。 |
-| `HTTP_PROXY` / `HTTPS_PROXY` | Node 和 Codex 子进程继承的可选网络代理。 |
+| `HTTP_PROXY` / `HTTPS_PROXY` | Node 和 agent 子进程继承的可选网络代理。 |
 
 ## 安全提示
 
-- 不要提交 App Secret、Codex 登录态、cookie 或 `~/.feishu-codex-bridge`。
+- 不要提交 App Secret、agent 登录态、cookie 或 `~/.feishu-codex-bridge`。
 - 把 `FEISHU_CODEX_WORKSPACE_ROOT` 设成 bot 真正需要访问的最小目录。
 - 邀请 bot 进共享群前，先在 `/config` 里设置管理员。
 - 群聊默认要求 @ bot，除非明确需要，否则不要关闭。
-- `/doctor` 会先清洗日志再交给 Codex，但日志仍可能包含运行元数据；只在可信会话里使用。
+- `/doctor` 会先清洗日志再交给当前 agent，但日志仍可能包含运行元数据；只在可信会话里使用。
 
 ## 开发
 

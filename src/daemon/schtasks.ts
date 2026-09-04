@@ -33,6 +33,13 @@ export interface LauncherInputs {
  */
 export function buildLauncherCmd(inputs: LauncherInputs): string {
   return [
+    // cmd parses batch files in the OEM codepage (GBK on zh-CN systems).
+    // The baked PATH and log paths contain the user profile — Chinese
+    // usernames make those lines non-ASCII, and under GBK every redirect
+    // to them fails with "系统找不到指定的路径". Switching the console to
+    // UTF-8 first makes cmd read the rest of the file correctly (verified
+    // empirically on Windows 11, 2026-09).
+    'chcp 65001 >nul',
     '@echo off',
     `set "PATH=${inputs.envPath}"`,
     'if exist "%APPDATA%\\npm" set "PATH=%APPDATA%\\npm;%PATH%"',

@@ -9,6 +9,9 @@ describe('Windows daemon launcher', () => {
       envPath: 'C:\\Windows\\System32',
     });
 
+    // First line must flip the console to UTF-8 before any line carrying
+    // the (possibly non-ASCII) user profile paths is parsed.
+    expect(script.startsWith('chcp 65001 >nul\r\n')).toBe(true);
     expect(script).toContain(':watchdog');
     expect(script).toContain('if exist "%APPDATA%\\npm" set "PATH=%APPDATA%\\npm;%PATH%"');
     expect(script).toContain('timeout /t 60 /nobreak');

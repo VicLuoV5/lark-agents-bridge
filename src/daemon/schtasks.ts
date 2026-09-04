@@ -17,6 +17,12 @@ export interface LauncherInputs {
   bridgeEntryPath: string;
   /** PATH for the child process; baked into the .cmd via `set PATH=`. */
   envPath: string;
+  /**
+   * Directory the daemon should run in — baked as a `cd /d` so the
+   * bridge's default workspace root follows the dir `start` was run from,
+   * not Task Scheduler's System32 default.
+   */
+  workingDir?: string;
 }
 
 /**
@@ -41,6 +47,7 @@ export function buildLauncherCmd(inputs: LauncherInputs): string {
     // empirically on Windows 11, 2026-09).
     'chcp 65001 >nul',
     '@echo off',
+    ...(inputs.workingDir ? [`cd /d "${inputs.workingDir}"`] : []),
     `set "PATH=${inputs.envPath}"`,
     'if exist "%APPDATA%\\npm" set "PATH=%APPDATA%\\npm;%PATH%"',
     'set "BRIDGE_WATCHDOG_SECONDS=60"',
@@ -65,6 +72,7 @@ async function writeLauncherCmd(): Promise<void> {
     nodePath: process.execPath,
     bridgeEntryPath,
     envPath: process.env.PATH ?? '',
+    workingDir: process.cwd(),
   });
   const cmdPath = windowsLauncherCmdPath();
   await mkdir(dirname(cmdPath), { recursive: true });

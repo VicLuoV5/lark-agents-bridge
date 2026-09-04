@@ -59,15 +59,14 @@ const MEDIA_GC_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 async function chooseAgentInteractively(): Promise<string | undefined> {
   const types = knownAgentTypes();
   if (types.length <= 1 || !process.stdin.isTTY) return undefined;
-  const options: { value: string; label: string; hint: string }[] = [];
-  for (const t of types) {
-    const r = await resolveAgent(t);
-    options.push({
-      value: t,
-      label: t,
-      hint: r.adapter ? '✓ 已检测到 CLI' : '未检测到（安装后可用）',
-    });
-  }
+  // Probe every CLI in parallel — each probe spawns `<cli> --version`
+  // (up to a few seconds on Windows), and serial probing stalls first run.
+  const resolutions = await Promise.all(types.map((t) => resolveAgent(t)));
+  const options: { value: string; label: string; hint: string }[] = types.map((t, i) => ({
+    value: t,
+    label: t,
+    hint: resolutions[i]?.adapter ? '✓ 已检测到 CLI' : '未检测到（安装后可用）',
+  }));
   const picked = await select({
     message: '选择要桥接的 agent CLI（回车确认）',
     options,
@@ -78,16 +77,11 @@ async function chooseAgentInteractively(): Promise<string | undefined> {
 
 /** Registry create-options from the active config (provider profile + key). */
 async function agentCreateOptions(cfg: AppConfig): Promise<AgentCreateOptions> {
-  try {
-    return {
-      provider: getAgentProvider(cfg),
-      apiKey: await resolveAgentSecret(cfg),
-      permissionMode: getAgentPermissionMode(cfg),
-    };
-  } catch (err) {
-    console.error(`✗ agent API key 解析失败：${err instanceof Error ? err.message : String(err)}`);
-    process.exit(1);
-  }
+  return {
+    provider: getAgentProvider(cfg),
+    apiKey: await resolveAgentSecret(cfg),
+    permissionMode: getAgentPermissionMode(cfg),
+  };
 }
 
 export interface StartOptions {
@@ -130,7 +124,14 @@ export async function runStart(opts: StartOptions): Promise<void> {
 
   // Resolve the configured agent (preferences.agent.type, default codex)
   // and verify its CLI exists before wiring the bridge.
-  const resolution = await resolveAgent(getAgentType(cfg), await agentCreateOptions(cfg));
+  let createOptions: AgentCreateOptions;
+  try {
+    createOptions = await agentCreateOptions(cfg);
+  } catch (err) {
+    console.error(`✗ agent 配置解析失败：${err instanceof Error ? err.message : String(err)}`);
+    process.exit(1);
+  }
+  const resolution = await resolveAgent(getAgentType(cfg), createOptions);
   if (resolution.error || !resolution.adapter) {
     console.error(`✗ ${resolution.error ?? 'agent 不可用'}`);
     process.exit(1);

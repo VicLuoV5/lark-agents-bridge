@@ -1,4 +1,4 @@
-import { getProviderProfile } from '../providers';
+import { getProviderProfile } from '../../config/provider-profiles';
 
 /**
  * Env for the spawned claude process when a provider profile is active.

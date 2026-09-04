@@ -183,6 +183,9 @@ export class AcpConnection {
       throw new Error('a prompt is already in flight for this session');
     }
     await this.start();
+    // A live prompt IS activity — disarm the reaper for its whole duration,
+    // however long the agent works. Re-armed on settle.
+    this.disarmIdleTimer();
     this.promptListeners.set(sessionId, onUpdate);
     const settled = new Promise<string>((resolve, reject) => {
       this.promptRejects.set(sessionId, reject);
@@ -248,7 +251,10 @@ export class AcpConnection {
       options.find((o) => (o.kind ?? '').startsWith(wantedKind)) ??
       (decision === 'allow' ? options[0] : undefined);
     const optionId = picked?.optionId ?? picked?.id;
-    if (decision === 'allow' && optionId === undefined) {
+    if (optionId === undefined) {
+      // No answerable option (e.g. a deny decision against an option list
+      // without a reject entry) — decline cleanly instead of sending a
+      // malformed selection.
       return { outcome: { outcome: 'cancelled' } };
     }
     return { outcome: { outcome: 'selected', optionId } };

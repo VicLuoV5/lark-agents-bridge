@@ -1,10 +1,9 @@
 import {
   AGENT_PERMISSION_MODES,
-  CODEX_REASONING_EFFORTS,
   type AgentPermissionMode,
   type MessageReplyMode,
 } from '../config/schema';
-import { PROVIDER_PROFILES } from '../agent/providers';
+import { PROVIDER_PROFILES } from '../config/provider-profiles';
 
 export interface ConfigFormOpts {
   messageReply: MessageReplyMode;
@@ -14,6 +13,11 @@ export interface ConfigFormOpts {
   runIdleTimeoutMinutes: number;
   /** Opaque; undefined means inherit the agent CLI's own config. */
   agentReasoningEffort?: string;
+  /**
+   * Reasoning-effort options for the ACTIVE adapter's vocabulary
+   * (undefined = the adapter has no effort knob; the field is hidden).
+   */
+  effortOptions?: string[];
   /** Undefined means read-only/default sandbox. */
   agentPermissionMode?: AgentPermissionMode;
   /** undefined / 'anthropic' = the user's own Claude login. */
@@ -110,25 +114,31 @@ export function configFormCard(opts: ConfigFormOpts): object {
               placeholder: { tag: 'plain_text', content: '0' },
               input_type: 'text',
             },
-            {
-              tag: 'markdown',
-              content:
-                '\n**推理强度**\n' +
-                '_默认:继承 agent CLI 自己的配置(Codex: CODEX_HOME/config.toml)_\n' +
-                '_仅影响通过 bridge 发起的 run,不会修改 agent 的全局配置_',
-            },
-            {
-              tag: 'select_static',
-              name: 'agent_reasoning_effort',
-              initial_option: opts.agentReasoningEffort ?? 'default',
-              options: [
-                { text: { tag: 'plain_text', content: '默认(继承 agent 配置)' }, value: 'default' },
-                ...CODEX_REASONING_EFFORTS.map((value) => ({
-                  text: { tag: 'plain_text', content: value },
-                  value,
-                })),
-              ],
-            },
+            // Reasoning effort is adapter-specific: only shown when the
+            // active adapter exposes a vocabulary (undefined = no knob).
+            ...(opts.effortOptions
+              ? ([
+                  {
+                    tag: 'markdown',
+                    content:
+                      '\n**推理强度**\n' +
+                      '_默认:继承 agent CLI 自己的配置(Codex: CODEX_HOME/config.toml)_\n' +
+                      '_仅影响通过 bridge 发起的 run,不会修改 agent 的全局配置_',
+                  },
+                  {
+                    tag: 'select_static',
+                    name: 'agent_reasoning_effort',
+                    initial_option: opts.agentReasoningEffort ?? 'default',
+                    options: [
+                      { text: { tag: 'plain_text', content: '默认(继承 agent 配置)' }, value: 'default' },
+                      ...opts.effortOptions.map((value) => ({
+                        text: { tag: 'plain_text', content: value },
+                        value,
+                      })),
+                    ],
+                  },
+                ] as object[])
+              : []),
             {
               tag: 'markdown',
               content:

@@ -1,4 +1,3 @@
-import { log } from '../core/logger';
 import { ensureLarkCliShim, type LarkCliShim } from '../runtime/lark-cli-shim';
 import { prependPathSegment, withWindowsNpmGlobalBin } from '../runtime/path-env';
 import { workspaceRoot } from '../workspace/guard';
@@ -92,9 +91,4 @@ bridge 已准备好一个工作区内的 lark-cli 入口，优先使用这个精
 \`${larkCli.commandPath}\`
 
 Windows 下 agent 沙箱里的 PATH / APPDATA 可能无法解析中文用户名路径。不要只因为 \`Get-Command lark-cli\` 或 \`where lark-cli\` 失败就判断 lark-cli 不可用；先尝试上面的工作区入口。`;
-}
-
-/** Log helper for adapters' spawn/exit lines so /doctor sees a uniform shape. */
-export function logAgentSpawn(id: string, pid: number | null | undefined, cwd: string, opts: { hasSession: boolean; promptChars: number; model?: string; binary: string }): void {
-  log.info('agent', 'spawn', { agent: id, pid: pid ?? null, cwd, ...opts });
 }

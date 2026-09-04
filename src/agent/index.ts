@@ -12,5 +12,4 @@ export { QwenAdapter } from './qwen/adapter';
 export { KimiAdapter } from './kimi/adapter';
 export { CodeBuddyAdapter } from './codebuddy/adapter';
 export { DshAdapter } from './dsh/adapter';
-export { PROVIDER_PROFILES, getProviderProfile, secretKeyForProvider, type ProviderProfile } from './providers';
 export { knownAgentTypes, resolveAgent, type AgentCreateOptions, type AgentResolution } from './registry';

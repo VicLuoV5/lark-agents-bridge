@@ -3,7 +3,7 @@ import { buildClaudeArgs } from '../src/agent/claude/adapter';
 import { applyProviderEnv } from '../src/agent/claude/provider-env';
 import { buildCodeBuddyArgs } from '../src/agent/codebuddy/adapter';
 import { buildQwenArgs } from '../src/agent/qwen/adapter';
-import { PROVIDER_PROFILES } from '../src/agent/providers';
+import { PROVIDER_PROFILES } from '../src/config/provider-profiles';
 
 const EXTRA_DIR = 'D:\\workspace\\.feishu-codex-bridge-tools';
 

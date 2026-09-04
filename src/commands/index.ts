@@ -25,11 +25,10 @@ import {
   getRunIdleTimeoutMs,
   getShowToolCalls,
   isCodexPermissionMode,
-  isCodexReasoningEffort,
   isAdmin,
   secretKeyForApp,
 } from '../config/schema';
-import { PROVIDER_PROFILES, secretKeyForProvider } from '../agent/providers';
+import { PROVIDER_PROFILES, secretKeyForProvider } from '../config/provider-profiles';
 import { setSecret } from '../config/keystore';
 import { buildEncryptedAccountConfig, saveConfig } from '../config/store';
 import { log, readRecentLogs, sanitizeLogsForDoctor } from '../core/logger';
@@ -923,6 +922,7 @@ async function showConfigForm(ctx: CommandContext): Promise<void> {
     maxConcurrentRuns: getMaxConcurrentRuns(ctx.controls.cfg),
     runIdleTimeoutMinutes: ms ? Math.round(ms / 60_000) : 0,
     agentReasoningEffort: getAgentReasoningEffort(ctx.controls.cfg),
+    effortOptions: ctx.agent.effortOptions ? [...ctx.agent.effortOptions] : undefined,
     agentPermissionMode: getAgentPermissionMode(ctx.controls.cfg),
     agentProvider: getAgentProvider(ctx.controls.cfg),
     agentModel: getAgentModel(ctx.controls.cfg),
@@ -992,11 +992,14 @@ async function submitConfig(ctx: CommandContext): Promise<void> {
   // Form field names are agent_reasoning_effort / agent_permission_mode;
   // legacy codex_* names still accepted so cards rendered by an older
   // bridge keep submitting correctly across an upgrade.
+  // Reasoning effort is opaque per adapter (vocabularies differ) — accept
+  // the submitted value verbatim; the adapter warns and ignores unknown
+  // values at run time.
   const rawReasoningEffort = String(fv.agent_reasoning_effort ?? fv.codex_reasoning_effort ?? '').trim();
   let agentReasoningEffort = getAgentReasoningEffort(ctx.controls.cfg);
   if (rawReasoningEffort === 'default') {
     agentReasoningEffort = undefined;
-  } else if (rawReasoningEffort && isCodexReasoningEffort(rawReasoningEffort)) {
+  } else if (rawReasoningEffort) {
     agentReasoningEffort = rawReasoningEffort;
   }
 
@@ -1028,11 +1031,15 @@ async function submitConfig(ctx: CommandContext): Promise<void> {
     await setSecret(secretKeyForProvider(agentProvider), rawApiKey);
     agentApiKeyRef = { source: 'exec', provider: 'bridge', id: secretKeyForProvider(agentProvider) };
   }
-  if (agentProvider && (rawApiKey || agentApiKeyRef)) {
-    agentKeyConfigured = Boolean(agentApiKeyRef);
-  } else {
-    agentApiKeyRef = undefined;
-  }
+  // A stored ref is only valid for the provider it was minted for — keep it
+  // across /config submits only when the provider didn't change (or a fresh
+  // key was just entered). Switching providers without a new key drops it,
+  // otherwise the new vendor would receive the old vendor's key.
+  const refId = (agentApiKeyRef as { id?: unknown } | undefined)?.id;
+  const refValidForProvider =
+    typeof refId === 'string' && agentProvider !== undefined && refId === secretKeyForProvider(agentProvider);
+  agentApiKeyRef = agentProvider && (rawApiKey || refValidForProvider) ? agentApiKeyRef : undefined;
+  agentKeyConfigured = Boolean(agentApiKeyRef);
   const agentProviderNote = agentProvider
     ? PROVIDER_PROFILES[agentProvider]?.note
     : undefined;

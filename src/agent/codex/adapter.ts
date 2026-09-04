@@ -17,6 +17,7 @@ export class CodexAdapter implements AgentAdapter {
   readonly id = 'codex';
   readonly displayName = 'Codex';
   readonly history: AgentHistory = { list: listRecentSessions };
+  readonly effortOptions = ['minimal', 'low', 'medium', 'high', 'xhigh'] as const;
   private readonly binary: string;
 
   constructor(opts: CodexAdapterOptions = {}) {

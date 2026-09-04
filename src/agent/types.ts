@@ -73,4 +73,10 @@ export interface AgentAdapter {
   run(opts: AgentRunOptions): AgentRun;
   /** Absent = the adapter has no resumable-session listing (/resume hidden). */
   readonly history?: AgentHistory;
+  /**
+   * This adapter's reasoning-effort vocabulary, for the /config form.
+   * Absent = the adapter has no effort knob (the field is hidden); values
+   * submitted for such adapters are still passed through opaquely.
+   */
+  readonly effortOptions?: readonly string[];
 }

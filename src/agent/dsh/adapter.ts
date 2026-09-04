@@ -17,6 +17,8 @@ export interface DshAdapterOptions {
   profileInstalled?: () => Promise<boolean>;
   /** Test seam: install the profile. */
   provision?: () => Promise<void>;
+  /** Test seam: ACP subprocess idle shutdown (default 10 min). */
+  idleShutdownMs?: number;
 }
 
 const ACP_PROFILE_ARGS = ['--profile', 'acp'];
@@ -34,11 +36,14 @@ const ACP_APP_PACKAGE = '@deepseek-ai/dsh-acp-app';
 export class DshAdapter implements AgentAdapter {
   readonly id = 'dsh';
   readonly displayName = 'DeepSeek Harness';
+  /** dsh's reasoning_effort config option, per the spike's configOptions. */
+  readonly effortOptions = ['off', 'low', 'high', 'max'] as const;
   private readonly binary: string;
   private readonly permissionMode: AgentRunOptions['permissionMode'];
   private readonly spawnDsh: (args: string[], options: SpawnOptions) => AgentChild;
   private readonly profileInstalledProbe: () => Promise<boolean>;
   private readonly provisionProfile: () => Promise<void>;
+  private readonly idleShutdownMs: number | undefined;
   private connection: AcpConnection | undefined;
   private provisioned = false;
   private provisioning: Promise<void> | undefined;
@@ -47,6 +52,7 @@ export class DshAdapter implements AgentAdapter {
   constructor(opts: DshAdapterOptions = {}) {
     this.binary = opts.binary ?? process.env.DSH_BIN ?? 'dsh';
     this.permissionMode = opts.permissionMode;
+    this.idleShutdownMs = opts.idleShutdownMs;
     this.spawnDsh = opts.spawn ?? ((args, options) => spawnAgentCommand(this.binary, args, options));
     this.profileInstalledProbe =
       opts.profileInstalled ??
@@ -166,7 +172,14 @@ export class DshAdapter implements AgentAdapter {
       // The channel persists this id for the chat — same contract as codex's
       // thread.started event.
       queue.push({ type: 'system', sessionId });
-      if (state.stopRequested) conn.cancel(sessionId);
+      if (state.stopRequested) {
+        // /stop landed while provisioning/session setup was still running —
+        // cancel whatever the server might have started and settle without
+        // submitting the prompt.
+        conn.cancel(sessionId);
+        finish({ type: 'done', sessionId });
+        return;
+      }
 
       await this.applyConfigOptions(sessionId, configOptions, opts);
 
@@ -242,7 +255,7 @@ export class DshAdapter implements AgentAdapter {
       agentId: this.id,
       spawn: () => this.spawnAcpChild(),
       decidePermission: () => this.decidePermission(),
-      idleShutdownMs: 10 * 60_000,
+      idleShutdownMs: this.idleShutdownMs ?? 10 * 60_000,
     });
     return this.connection;
   }

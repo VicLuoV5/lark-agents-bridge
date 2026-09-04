@@ -286,6 +286,22 @@ describe('dsh adapter over a fake ACP server', () => {
     expect((events.at(-1) as { message: string }).message).toContain('resume');
   });
 
+  it('keeps a long-running prompt alive past the idle-shutdown window', { timeout: 20_000 }, async () => {
+    const server = new FakeAcpServer();
+    server.holdPrompt = true;
+    const adapter = new DshAdapter({
+      spawn: () => server.child,
+      profileInstalled: async () => true,
+      provision: async () => {},
+      idleShutdownMs: 100, // would reap the subprocess mid-prompt if armed
+    });
+    const collected = collect(adapter.run({ prompt: 'long task' }).events);
+    await new Promise((r) => setTimeout(r, 400)); // 4× the idle window
+    server.releasePrompt('end_turn');
+    const events = await collected;
+    expect(events.at(-1)).toMatchObject({ type: 'done' });
+  });
+
   it('surfaces provisioning failures with the manual command hint', { timeout: 20_000 }, async () => {
     const adapter = new DshAdapter({
       spawn: () => new FakeAcpServer().child,

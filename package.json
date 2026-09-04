@@ -48,11 +48,11 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/VicLuoV5/lark-codex-bridge.git"
+    "url": "git+https://github.com/VicLuoV5/lark-agents-bridge.git"
   },
-  "homepage": "https://github.com/VicLuoV5/lark-codex-bridge#readme",
+  "homepage": "https://github.com/VicLuoV5/lark-agents-bridge#readme",
   "bugs": {
-    "url": "https://github.com/VicLuoV5/lark-codex-bridge/issues"
+    "url": "https://github.com/VicLuoV5/lark-agents-bridge/issues"
   },
   "publishConfig": {
     "access": "public"

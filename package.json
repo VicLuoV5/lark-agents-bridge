@@ -46,6 +46,11 @@
   "engines": {
     "node": ">=20.0.0"
   },
+  "pnpm": {
+    "overrides": {
+      "form-data": ">=4.0.6"
+    }
+  },
   "repository": {
     "type": "git",
     "url": "git+https://github.com/VicLuoV5/lark-agents-bridge.git"

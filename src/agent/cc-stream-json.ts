@@ -68,6 +68,15 @@ export function* translateClaudeEvent(
     return;
   }
 
+  if (evt.type === 'stream_event' && evt.event?.type === 'message_start') {
+    // A new message begins streaming — its complete form must not be
+    // suppressed by the previous message's deltas. CodeBuddy splits one
+    // reply into MULTIPLE complete assistant messages (thinking, then
+    // text), so per-message resets suppress nothing correctly.
+    state.partialEmitted = false;
+    return;
+  }
+
   if (evt.type === 'stream_event' && evt.event?.type === 'content_block_delta') {
     const delta = evt.event.delta;
     if (!delta) return;
@@ -82,18 +91,26 @@ export function* translateClaudeEvent(
   }
 
   if (evt.type === 'assistant' && evt.message) {
+    let yielded = false;
     for (const block of asBlocks(evt.message.content)) {
       if (block.type === 'text') {
-        if (!state.partialEmitted && block.text) yield { type: 'text', delta: block.text };
+        if (!state.partialEmitted && block.text) {
+          yield { type: 'text', delta: block.text };
+          yielded = true;
+        }
       } else if (block.type === 'thinking') {
         if (!state.partialEmitted && block.thinking) {
           yield { type: 'thinking', delta: block.thinking };
+          yielded = true;
         }
       } else if (block.type === 'tool_use' && block.id) {
         yield { type: 'tool_use', id: block.id, name: block.name ?? 'tool', input: block.input ?? {} };
       }
     }
-    state.partialEmitted = false;
+    // Clear the suppression flag only when this complete message carried
+    // fresh content — a fully-suppressed message (CodeBuddy's split
+    // thinking/text messages) must keep the flag armed for its siblings.
+    if (yielded) state.partialEmitted = false;
     return;
   }
 

@@ -76,12 +76,14 @@ describe('claude stream-json translation', () => {
     ]);
   });
 
-  it('resets dedupe per message so the next message streams again', () => {
+  it('resets dedupe on message_start so the next message streams again', () => {
     const state = createClaudeTranslatorState();
     const out: unknown[] = [];
     for (const line of [
       { type: 'stream_event', event: { type: 'content_block_delta', delta: { type: 'text_delta', text: 'one' } } },
       { type: 'assistant', message: { content: [{ type: 'text', text: 'one' }] } },
+      { type: 'stream_event', event: { type: 'message_start' } },
+      { type: 'stream_event', event: { type: 'content_block_delta', delta: { type: 'text_delta', text: 'two' } } },
       { type: 'assistant', message: { content: [{ type: 'text', text: 'two' }] } },
     ]) {
       for (const evt of translateClaudeEvent(line, state)) out.push(evt);
@@ -89,6 +91,31 @@ describe('claude stream-json translation', () => {
     expect(out).toEqual([
       { type: 'text', delta: 'one' },
       { type: 'text', delta: 'two' },
+    ]);
+  });
+
+  it('handles codebuddy-style split messages: thinking and text as separate completes', () => {
+    // Real codebuddy sequence (2026-09-04): both blocks streamed as deltas,
+    // then TWO complete assistant messages — thinking-only, then text-only.
+    // The suppressed thinking message must NOT disarm suppression for the
+    // text sibling, or the text arrives twice.
+    const events = collect([
+      { type: 'stream_event', event: { type: 'message_start' } },
+      { type: 'stream_event', event: { type: 'content_block_start', index: 0, content_block: { type: 'thinking', thinking: '' } } },
+      { type: 'stream_event', event: { type: 'content_block_delta', delta: { type: 'thinking_delta', thinking: 'Simple: reply.' } } },
+      { type: 'stream_event', event: { type: 'content_block_delta', delta: { type: 'thinking_delta', thinking: '' } } },
+      { type: 'stream_event', event: { type: 'content_block_stop', index: 0 } },
+      { type: 'stream_event', event: { type: 'content_block_start', index: 1, content_block: { type: 'text', text: '' } } },
+      { type: 'stream_event', event: { type: 'content_block_delta', delta: { type: 'text_delta', text: '你好' } } },
+      { type: 'stream_event', event: { type: 'content_block_stop', index: 1 } },
+      { type: 'stream_event', event: { type: 'message_delta', delta: { stop_reason: 'end_turn' } } },
+      { type: 'stream_event', event: { type: 'message_stop' } },
+      { type: 'assistant', message: { content: [{ type: 'thinking', thinking: 'Simple: reply.', signature: '' }] } },
+      { type: 'assistant', message: { content: [{ type: 'text', text: '你好' }] } },
+    ]);
+    expect(events).toEqual([
+      { type: 'thinking', delta: 'Simple: reply.' },
+      { type: 'text', delta: '你好' },
     ]);
   });
 

@@ -1,20 +1,20 @@
 # lark-agents-bridge
 
-把飞书 / Lark 聊天消息转发给本机 Codex CLI 的本地 bot。适合已经在本机登录并使用 Codex CLI，希望从飞书聊天里触发同一套本地 Codex 能力的个人或小团队。
+把飞书 / Lark 聊天消息转发给本机 coding agent CLI 的本地 bot——Codex、Claude Code、Qwen Code、Kimi Code、CodeBuddy、DeepSeek Harness，在聊天里随时切换。适合已经在本机跑着 agent，希望从飞书直接驱动它的个人或小团队。
 
 [English README](./README.md)
 
-本项目参考了 `zarazhangrui/feishu-claude-code-bridge` 的架构，agent 层改为 Codex CLI，本地状态目录改为 `~/.feishu-codex-bridge`。
+本项目参考了 `zarazhangrui/feishu-claude-code-bridge` 的架构，agent 层泛化为可插拔适配器，本地状态目录沿用 `~/.feishu-codex-bridge`。
 
 ## 当前状态
 
 这是从个人自用部署整理出的开源 alpha。个人使用和小团队使用已经比较顺手，但邀请进大群或长期无人值守前，请先检查安全边界和访问控制。
 
-本项目不需要 OpenAI API key，也不需要 Claude API key。Codex 通过本机 Codex CLI 登录态运行。
+桥本身不需要任何 API key：每个 agent 用各自的登录态或凭据运行，按该 agent 官方方式提前配好即可，与桥无关。
 
 ## 功能
 
-- 把飞书 / Lark 消息发送给本机 agent CLI（默认 Codex，也支持 Claude Code）。
+- 把飞书 / Lark 消息发送给本机 agent CLI（默认 Codex，也支持 Claude Code、Qwen Code、Kimi Code、CodeBuddy、DeepSeek Harness）。
 - 每个 chat 或话题维护独立 agent session。
 - 支持轻量流式 markdown 卡片，也支持跑完后一次性发文本。
 - `/new [name]` 创建新群、新会话，并继承当前工作目录。

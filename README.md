@@ -1,20 +1,20 @@
 # lark-agents-bridge
 
-A local Feishu / Lark bot that forwards chat messages to your local Codex CLI. It is designed for people who already use Codex on their own machine and want to trigger the same local agent from Feishu or Lark chats.
+A local Feishu / Lark bot that forwards chat messages to your local coding agent CLI — Codex, Claude Code, Qwen Code, Kimi Code, CodeBuddy, or DeepSeek Harness, switchable from the chat itself. It is designed for people who already run an agent on their own machine and want to drive it from Feishu or Lark chats.
 
 [中文 README](./README.zh.md)
 
-This project was adapted from the architecture of `zarazhangrui/feishu-claude-code-bridge`, with the agent layer replaced by Codex CLI and the local state directory renamed to `~/.feishu-codex-bridge`.
+This project was adapted from the architecture of `zarazhangrui/feishu-claude-code-bridge`, with the agent layer generalized into pluggable adapters and the local state directory renamed to `~/.feishu-codex-bridge` (kept for continuity).
 
 ## Status
 
 This is an open-source alpha extracted from a personal deployment. It is useful for personal or small-team use, but you should review the security model and access-control settings before inviting it into large groups.
 
-It does not require an OpenAI API key or a Claude API key. Codex runs through your local Codex CLI login.
+The bridge itself needs no API keys: every agent runs through its own login or credentials, set up with that agent's own tooling before the bridge starts.
 
 ## Features
 
-- Send Feishu / Lark messages to a local agent CLI (Codex by default, Claude Code also supported).
+- Send Feishu / Lark messages to a local agent CLI (Codex by default; Claude Code, Qwen Code, Kimi Code, CodeBuddy, and DeepSeek Harness also supported).
 - Keep separate agent sessions per chat or topic.
 - Stream replies as lightweight markdown cards or send one final text reply.
 - Use `/new [name]` to create a new group chat and inherit the current workspace.

@@ -71,26 +71,80 @@ interface SchtasksResult {
   stdout: string;
 }
 
+/**
+ * Windows console tools emit text in the ANSI codepage (GBK on zh-CN
+ * systems), not UTF-8. Decode as UTF-8 first; replacement characters mean
+ * we guessed wrong — retry with GBK.
+ */
+export function decodeConsoleOutput(buf: Buffer | undefined): string {
+  if (!buf || buf.length === 0) return '';
+  const utf8 = buf.toString('utf8');
+  if (!utf8.includes('�')) return utf8;
+  try {
+    return new TextDecoder('gbk').decode(buf);
+  } catch {
+    return utf8;
+  }
+}
+
 function runSchtasks(args: string[]): SchtasksResult {
-  const r = spawnSync('schtasks', args, { encoding: 'utf8' });
+  const r = spawnSync('schtasks', args, { encoding: 'buffer' });
   return {
     ok: r.status === 0,
-    stderr: r.stderr ?? '',
-    stdout: r.stdout ?? '',
+    stderr: decodeConsoleOutput(r.stderr),
+    stdout: decodeConsoleOutput(r.stdout),
+  };
+}
+
+/** Build the Register-ScheduledTask command for one launcher path. */
+export function buildInstallCommand(launcherPath: string): string {
+  const esc = (s: string): string => s.replace(/'/g, "''");
+  return [
+    'Register-ScheduledTask',
+    `-TaskName '${esc(WINDOWS_TASK_NAME)}'`,
+    '-Trigger (New-ScheduledTaskTrigger -AtLogOn)',
+    `-Action (New-ScheduledTaskAction -Execute '${esc(launcherPath)}')`,
+    '-Settings (New-ScheduledTaskSettingsSet -StartWhenAvailable ' +
+      '-AllowStartIfOnBatteries -DontStopIfGoingOnBatteries ' +
+      '-ExecutionTimeLimit ([TimeSpan]::Zero))',
+    "-Description 'feishu-codex-bridge daemon: auto-start at logon with watchdog restart'",
+    '-Force',
+  ].join(' ');
+}
+
+/**
+ * Register the logon task WITHOUT admin rights. `schtasks /SC ONLOGON`
+ * requires an elevated console on modern Windows (拒绝访问 for normal
+ * users), but the ScheduledTasks module registers per-user logon tasks
+ * freely — and handles non-ASCII paths correctly. The task settings also
+ * clear the default 72-hour execution limit (the launcher's watchdog loop
+ * is meant to run indefinitely) and allow battery-powered starts.
+ */
+function installTaskViaPowerShell(): SchtasksResult {
+  const ps = buildInstallCommand(windowsLauncherCmdPath());
+  const r = spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', ps], {
+    encoding: 'buffer',
+    windowsHide: true,
+  });
+  return {
+    ok: r.status === 0,
+    stderr: decodeConsoleOutput(r.stderr),
+    stdout: decodeConsoleOutput(r.stdout),
   };
 }
 
 /**
- * Create (or overwrite) the scheduled task. Trigger: ONLOGON.
- * `/RL LIMITED` runs as the current user without admin elevation.
- * `/F` overwrites if the task already exists.
- *
- * The /TR value is the .cmd wrapper path. Schtasks treats /TR as a command
- * line, so wrapping in quotes keeps spaces in the path intact.
+ * Create (or overwrite) the logon task. Primary path: Register-ScheduledTask
+ * (no elevation needed). Fallback: the legacy `schtasks /SC ONLOGON` for
+ * environments where the ScheduledTasks module is unavailable (that path
+ * needs an elevated console). If both fail, surface the PowerShell error —
+ * it's the path modern machines should be able to use.
  */
 export async function installTask(): Promise<SchtasksResult> {
   await writeLauncherCmd();
-  return runSchtasks([
+  const viaPowerShell = installTaskViaPowerShell();
+  if (viaPowerShell.ok) return viaPowerShell;
+  const legacy = runSchtasks([
     '/Create',
     '/F',
     '/SC',
@@ -102,6 +156,7 @@ export async function installTask(): Promise<SchtasksResult> {
     '/TR',
     `"${windowsLauncherCmdPath()}"`,
   ]);
+  return legacy.ok ? legacy : viaPowerShell;
 }
 
 /** Start the task now (regardless of trigger). */

@@ -1,4 +1,5 @@
 import type { Block, FooterStatus, RunState, ToolEntry } from './run-state';
+import { normalizeMathForLarkMarkdown } from './math-normalizer';
 import { toolBodyMd, toolHeaderText } from './tool-render';
 
 const REASONING_MAX = 1500;
@@ -166,7 +167,7 @@ function panelHeader(titleMd: string): object {
 }
 
 function markdown(content: string): object {
-  return { tag: 'markdown', content };
+  return { tag: 'markdown', content: normalizeMathForLarkMarkdown(content) };
 }
 
 function noteMd(content: string): object {

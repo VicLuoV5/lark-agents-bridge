@@ -17,6 +17,7 @@
 - 把飞书 / Lark 消息发送给本机 agent CLI（默认 Codex，也支持 Claude Code、Qwen Code、Kimi Code、CodeBuddy、DeepSeek Harness）。
 - 每个 chat 或话题维护独立 agent session。
 - 支持轻量流式 markdown 卡片，也支持跑完后一次性发文本。
+- 将 Codex 常见的 LaTeX 公式转换为飞书 / Lark 可读的 Unicode 数学文本。
 - `/new [name]` 创建新群、新会话，并继承当前工作目录。
 - `/reset` 清空当前 chat 会话。
 - `/cd` 和 `/ws` 切换、保存工作空间。

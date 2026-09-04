@@ -1,4 +1,5 @@
 import type { Block, RunState, ToolEntry } from './run-state';
+import { normalizeMathForLarkMarkdown } from './math-normalizer';
 import { toolHeaderText } from './tool-render';
 
 /**
@@ -35,7 +36,7 @@ export function renderText(state: RunState): string {
 
 function renderBlock(block: Block): string {
   if (block.kind === 'text') {
-    return block.content.trim();
+    return normalizeMathForLarkMarkdown(block.content.trim());
   }
   return toolLine(block.tool);
 }

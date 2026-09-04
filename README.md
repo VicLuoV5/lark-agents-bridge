@@ -17,6 +17,7 @@ The bridge itself needs no API keys: every agent runs through its own login or c
 - Send Feishu / Lark messages to a local agent CLI (Codex by default; Claude Code, Qwen Code, Kimi Code, CodeBuddy, and DeepSeek Harness also supported).
 - Keep separate agent sessions per chat or topic.
 - Stream replies as lightweight markdown cards or send one final text reply.
+- Render common LaTeX formulas from Codex as readable Unicode math in Feishu/Lark.
 - Use `/new [name]` to create a new group chat and inherit the current workspace.
 - Use `/reset` to clear the current chat session.
 - Switch and save workspaces with `/cd` and `/ws`.

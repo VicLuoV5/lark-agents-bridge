@@ -1,6 +1,7 @@
 import type { SpawnOptions } from 'node:child_process';
 import { buildBridgePrompt, prepareAgentEnv } from './bridge';
 import { createJsonlEventStream } from './jsonl';
+import { withResumeFallback } from './resume-fallback';
 import { spawnAgentCommand, stopChild, waitForChildExit, type AgentChild } from './proc';
 import { log } from '../core/logger';
 import { workspaceRoot } from '../workspace/guard';
@@ -53,6 +54,24 @@ function errorRun(agentId: string, message: string): AgentRun {
 }
 
 export function runStreamJsonAgent(spec: StreamJsonAgentSpec, opts: AgentRunOptions): AgentRun {
+  const base = buildStreamJsonRun(spec, opts);
+  if (!opts.sessionId) return base;
+  // Resuming a stored id can hard-fail (wiped CLI storage, upgrade, run
+  // that died before persisting) — retry once fresh, same contract as the
+  // codex adapter. Only fires for startup failures; see withResumeFallback.
+  let current: AgentRun = base;
+  return {
+    events: withResumeFallback(base, opts, spec.agentId, (retryOpts: AgentRunOptions): AgentRun => {
+      const retry = buildStreamJsonRun(spec, retryOpts);
+      current = retry;
+      return retry;
+    }),
+    stop: async () => current.stop(),
+    waitForExit: (timeoutMs) => current.waitForExit(timeoutMs),
+  };
+}
+
+function buildStreamJsonRun(spec: StreamJsonAgentSpec, opts: AgentRunOptions): AgentRun {
   const cwd = opts.cwd ?? workspaceRoot();
   const { env, larkCli } = prepareAgentEnv(cwd);
   if (spec.extraEnv) Object.assign(env, spec.extraEnv);

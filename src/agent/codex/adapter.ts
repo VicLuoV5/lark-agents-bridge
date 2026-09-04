@@ -1,5 +1,6 @@
 import { createInterface } from 'node:readline';
 import { buildBridgePrompt, prepareAgentEnv } from '../bridge';
+import { withResumeFallback } from '../resume-fallback';
 import { spawnAgentCommand, stopChild, waitForChildExit, type AgentChild } from '../proc';
 import { log } from '../../core/logger';
 import { withWindowsNpmGlobalBin } from '../../runtime/path-env';
@@ -44,7 +45,7 @@ export class CodexAdapter implements AgentAdapter {
     // user's message; the fresh run's system event heals the stored id.
     let current: AgentRun = base;
     return {
-      events: withStaleSessionFallback(base, opts, (retryOpts: AgentRunOptions): AgentRun => {
+      events: withResumeFallback(base, opts, this.id, (retryOpts: AgentRunOptions): AgentRun => {
         const retry = this.spawnRun(retryOpts);
         current = retry;
         return retry;
@@ -150,37 +151,6 @@ function sandboxForPermissionMode(mode: AgentRunOptions['permissionMode']): stri
   if (mode === 'bypassPermissions') return 'danger-full-access';
   if (mode === 'acceptEdits') return 'workspace-write';
   return 'read-only';
-}
-
-/** Failure messages that mean "the stored session id points nowhere". */
-export const RESUME_FAILURE_RE =
-  /no rollout found|thread\/resume|resume failed|session not found|no session found/i;
-
-/**
- * Swallow one resume-flavored failure and re-run the prompt as a fresh
- * session. Terminal errors of any other kind pass through untouched.
- */
-export async function* withStaleSessionFallback(
-  base: AgentRun,
-  opts: AgentRunOptions,
-  spawn: (opts: AgentRunOptions) => AgentRun,
-): AsyncGenerator<AgentEvent> {
-  let resumeFailed: string | undefined;
-  for await (const evt of base.events) {
-    if (evt.type === 'error' && RESUME_FAILURE_RE.test(evt.message)) {
-      resumeFailed = evt.message;
-      break;
-    }
-    yield evt;
-  }
-  if (resumeFailed === undefined) return;
-  log.warn('agent', 'resume-stale-retry-fresh', {
-    agent: 'codex',
-    sessionId: opts.sessionId,
-    detail: resumeFailed.slice(0, 200),
-  });
-  const retry = spawn({ ...opts, sessionId: undefined });
-  yield* retry.events;
 }
 
 export function extraSandboxDirsForPermissionMode(

@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
   RESUME_FAILURE_RE,
-  withStaleSessionFallback,
-} from '../src/agent/codex/adapter';
+  withResumeFallback,
+} from '../src/agent/resume-fallback';
 import type { AgentEvent, AgentRun, AgentRunOptions } from '../src/agent/types';
 
 function fakeRun(events: AgentEvent[]): AgentRun {
@@ -22,17 +22,19 @@ async function collect(events: AsyncIterable<AgentEvent>): Promise<AgentEvent[]>
 }
 
 const OPTS: AgentRunOptions = { prompt: 'hi', sessionId: 'dead-1' };
+const AGENT = 'claude';
 
-describe('codex stale-session fallback', () => {
-  it('swallows a resume failure and retries fresh', async () => {
+describe('resume fallback (shared by codex + stream-json agents)', () => {
+  it('swallows a startup resume failure and retries fresh', async () => {
     let retriedWith: AgentRunOptions | undefined;
     const events = await collect(
-      withStaleSessionFallback(
+      withResumeFallback(
         fakeRun([
           { type: 'system', sessionId: 'dead-1' },
-          { type: 'error', message: 'codex exited with code 1: Error: thread/resume: no rollout found for thread id x' },
+          { type: 'error', message: 'claude exited with code 1: No conversation found with session ID dead-1' },
         ]),
         OPTS,
+        AGENT,
         (opts) => {
           retriedWith = opts;
           return fakeRun([
@@ -54,21 +56,43 @@ describe('codex stale-session fallback', () => {
     ]);
   });
 
+  it('never retries after user-visible output (side-effect safety)', async () => {
+    const events = await collect(
+      withResumeFallback(
+        fakeRun([
+          { type: 'text', delta: 'partial answer' },
+          { type: 'error', message: 'no conversation found' },
+        ]),
+        OPTS,
+        AGENT,
+        () => {
+          throw new Error('must not retry after user-visible output');
+        },
+      ),
+    );
+    expect(events).toEqual([
+      { type: 'text', delta: 'partial answer' },
+      { type: 'error', message: 'no conversation found' },
+    ]);
+  });
+
   it('passes through non-resume errors untouched', async () => {
     const events = await collect(
-      withStaleSessionFallback(
-        fakeRun([{ type: 'error', message: 'codex exited with code 1: network unreachable' }]),
+      withResumeFallback(
+        fakeRun([{ type: 'error', message: 'claude exited with code 1: network unreachable' }]),
         OPTS,
+        AGENT,
         () => {
           throw new Error('must not retry');
         },
       ),
     );
-    expect(events).toEqual([{ type: 'error', message: 'codex exited with code 1: network unreachable' }]);
+    expect(events).toEqual([{ type: 'error', message: 'claude exited with code 1: network unreachable' }]);
   });
 
-  it('matches the documented codex failure phrasing', () => {
+  it('matches the documented failure phrasings across CLIs', () => {
     expect(RESUME_FAILURE_RE.test('Error: thread/resume: thread/resume failed: no rollout found for thread id 1a55 (code -32600)')).toBe(true);
+    expect(RESUME_FAILURE_RE.test('No conversation found with session ID dead-1')).toBe(true);
     expect(RESUME_FAILURE_RE.test('Error: quota exceeded')).toBe(false);
   });
 });

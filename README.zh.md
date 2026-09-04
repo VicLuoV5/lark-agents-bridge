@@ -35,8 +35,11 @@ bridge 会 spawn 一个本地 agent CLI，由 `config.json` 里的 `preferences.
 | `qwen` | `qwen -p --output-format stream-json` | 你的 Qwen Code 登录。会话续接需要在 qwen 设置里开启 `general.chatRecording`。 |
 | `kimi` | `kimi -p --output-format stream-json` | 你的 Kimi Code 登录（Windows 需要 Git for Windows）。非交互模式固定走 CLI 的 auto 权限；消息整条到达（无逐 token 流）。 |
 | `codebuddy` | `codebuddy -p --output-format stream-json` | 你的 CodeBuddy 浏览器 OAuth 登录（或 `CODEBUDDY_API_KEY`）。 |
+| `dsh` | `dsh --profile acp`（常驻 ACP 子进程） | dsh 自身的认证（先用 dsh 官方方式配好，与桥无关）。developer preview——可能有破坏性变更。 |
 
 每个 adapter 都注入同一套 bridge 约定和本地 `lark-cli` shim，所以每个 agent 都能像 Codex 一样反过来操作飞书（消息、文档、交互卡片）。供应商 API Key 保存在本机加密 keystore（`secrets.enc`），不进 config.json、不进日志。各家端点和模型 id 迭代很快，内置 profile 只作默认值，供应商改名时用 `/config` 覆盖模型 id 即可。Kimi 的输出 schema 官方未成文，adapter 按容错方式实现，若 Kimi Code 改了流式格式需要同步调整。
+
+`dsh` adapter 把 DeepSeek Harness 跑成一个所有聊天共享的常驻 ACP 子进程（进程重启后经 `session/resume` 恢复会话），首次使用时自动安装 acp profile，并按 `/config` 的文件权限档位控制审批回调。注意：回复按消息粒度到达（无逐 token 流），且 dsh 的 Windows 沙箱只有部分强制力——把它当实验性能力看待。版本要配对：acp 插件和 launcher 必须同一代，建议 launcher 直接装 next 通道（`npm i -g @deepseek-ai/dsh@next`），版本错配会在 profile 加载时报错。
 
 ## 前置条件
 

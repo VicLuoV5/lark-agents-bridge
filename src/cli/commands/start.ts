@@ -9,7 +9,7 @@ import type { Controls } from '../../commands';
 import { setSecret } from '../../config/keystore';
 import { paths } from '../../config/paths';
 import type { AppConfig } from '../../config/schema';
-import { getAgentProvider, getAgentType, isComplete, secretKeyForApp } from '../../config/schema';
+import { getAgentPermissionMode, getAgentProvider, getAgentType, isComplete, secretKeyForApp } from '../../config/schema';
 import { resolveAgentSecret } from '../../config/secret-resolver';
 import {
   buildEncryptedAccountConfig,
@@ -79,7 +79,11 @@ async function chooseAgentInteractively(): Promise<string | undefined> {
 /** Registry create-options from the active config (provider profile + key). */
 async function agentCreateOptions(cfg: AppConfig): Promise<AgentCreateOptions> {
   try {
-    return { provider: getAgentProvider(cfg), apiKey: await resolveAgentSecret(cfg) };
+    return {
+      provider: getAgentProvider(cfg),
+      apiKey: await resolveAgentSecret(cfg),
+      permissionMode: getAgentPermissionMode(cfg),
+    };
   } catch (err) {
     console.error(`✗ agent API key 解析失败：${err instanceof Error ? err.message : String(err)}`);
     process.exit(1);

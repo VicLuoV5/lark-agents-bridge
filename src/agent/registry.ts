@@ -1,9 +1,11 @@
+import type { AgentPermissionMode } from '../config/schema';
 import type { AgentAdapter } from './types';
 import { CodexAdapter } from './codex/adapter';
 import { ClaudeAdapter } from './claude/adapter';
 import { QwenAdapter } from './qwen/adapter';
 import { KimiAdapter } from './kimi/adapter';
 import { CodeBuddyAdapter } from './codebuddy/adapter';
+import { DshAdapter } from './dsh/adapter';
 
 /** Runtime options an adapter may need from the active config. */
 export interface AgentCreateOptions {
@@ -11,6 +13,8 @@ export interface AgentCreateOptions {
   provider?: string;
   /** Resolved provider API key plaintext (claude adapter). */
   apiKey?: string;
+  /** Bridge permission vocabulary snapshot (dsh adapter approval policy). */
+  permissionMode?: AgentPermissionMode;
 }
 
 interface AgentRegistration {
@@ -50,6 +54,11 @@ const REGISTRY: Record<string, AgentRegistration> = {
     displayName: 'CodeBuddy Code',
     installHint: '未找到 CodeBuddy Code CLI。请先安装并登录（浏览器 OAuth 或 CODEBUDDY_API_KEY）：\n  npm i -g @tencent-ai/codebuddy-code',
     create: () => new CodeBuddyAdapter(),
+  },
+  dsh: {
+    displayName: 'DeepSeek Harness',
+    installHint: '未找到 DeepSeek Harness CLI（developer preview）。请先安装，launcher 需与 acp 插件版本配套（建议直接装 next 通道）：\n  npm i -g @deepseek-ai/dsh@next\n  前提：dsh 自身已完成认证（按 dsh 官方方式自备，与桥无关）',
+    create: (opts) => new DshAdapter({ permissionMode: opts?.permissionMode }),
   },
 };
 

@@ -35,8 +35,11 @@ The bridge spawns a local agent CLI; `preferences.agent.type` in `config.json` (
 | `qwen` | `qwen -p --output-format stream-json` | Your Qwen Code login. Session resume needs `general.chatRecording=true` in qwen settings. |
 | `kimi` | `kimi -p --output-format stream-json` | Your Kimi Code login (Windows needs Git for Windows). Non-interactive runs use the CLI's `auto` permission; messages arrive whole (no token deltas). |
 | `codebuddy` | `codebuddy -p --output-format stream-json` | Your CodeBuddy OAuth login (or `CODEBUDDY_API_KEY`). |
+| `dsh` | `dsh --profile acp` (persistent ACP subprocess) | dsh's own credentials (set up dsh first, as its docs require). Developer preview — expect breaking changes. |
 
 Every adapter injects the same bridge conventions and the local `lark-cli` shim, so each agent can operate Feishu (messages, docs, interactive cards) exactly like Codex. Provider API keys are stored in the encrypted local keystore (`secrets.enc`), never in `config.json` or logs. Provider endpoints/models move quickly — treat the built-in profiles as defaults and override the model id via `/config` when a vendor renames things. The Kimi adapter is based on an undocumented output schema; if a Kimi Code release changes its stream format, the adapter may need a matching update.
+
+The `dsh` adapter runs DeepSeek Harness as one long-lived ACP subprocess shared by all chats (sessions survive process restarts via `session/resume`), auto-installs its `acp` profile on first use, and enforces the `/config` file-permission vocabulary through its approval callbacks. Notes: replies arrive per message (no token streaming), and dsh's Windows sandbox is only partially enforced — treat it as experimental. Version pairing matters: the `acp` profile plugin must match the launcher generation, so install the launcher from the `next` channel (`npm i -g @deepseek-ai/dsh@next`); mismatched versions fail at profile load.
 
 ## Requirements
 

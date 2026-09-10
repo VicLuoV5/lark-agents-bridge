@@ -53,6 +53,16 @@ export function windowsLauncherCmdPath(): string {
   return join(paths.appDir, 'daemon-launcher.cmd');
 }
 
+/** Hidden-window VBS wrapper handed to the scheduled task (UTF-16 written). */
+export function windowsLauncherVbsPath(): string {
+  return join(paths.appDir, 'daemon-launcher.vbs');
+}
+
+/** Register-ScheduledTask script executed by the service installer. */
+export function windowsInstallPs1Path(): string {
+  return join(paths.appDir, 'daemon-install.ps1');
+}
+
 // === Daemon log paths (platform-agnostic) ===
 
 /**

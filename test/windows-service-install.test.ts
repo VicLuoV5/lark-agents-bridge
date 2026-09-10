@@ -1,25 +1,42 @@
 import { describe, expect, it } from 'vitest';
 import {
   buildInstallCommand,
+  buildLauncherVbs,
   decodeConsoleOutput,
   withAccessDeniedGuidance,
 } from '../src/daemon/schtasks';
 
 describe('windows service install (non-admin Register-ScheduledTask)', () => {
-  it('builds a logon-triggered command with no execution-time limit', () => {
-    const cmd = buildInstallCommand('C:\\Users\\me\\.feishu-codex-bridge\\daemon-launcher.cmd');
+  it('builds a logon + 10-minute self-heal task with hidden window and no time limit', () => {
+    const cmd = buildInstallCommand(
+      'C:\\Users\\me\\.feishu-codex-bridge\\daemon-launcher.cmd',
+      'C:\\Users\\me\\.feishu-codex-bridge\\daemon-launcher.vbs',
+      'D:\\workspace',
+    );
     expect(cmd).toContain("Register-ScheduledTask -TaskName 'FeishuCodexBridge.Bot'");
     expect(cmd).toContain('New-ScheduledTaskTrigger -AtLogOn');
-    expect(cmd).toContain("New-ScheduledTaskAction -Execute 'C:\\Users\\me\\.feishu-codex-bridge\\daemon-launcher.cmd'");
+    // 10-minute repetition = sleep/resume + crash self-heal for laptops.
+    expect(cmd).toContain('-RepetitionInterval (New-TimeSpan -Minutes 10)');
+    // The console was a real failure mode (closing it killed the tree) —
+    // the action must go through the hidden-window VBS wrapper.
+    expect(cmd).toContain("Execute 'wscript.exe'");
+    expect(cmd).toContain('daemon-launcher.vbs');
+    expect(cmd).toContain("-WorkingDirectory 'D:\\workspace'");
     // The launcher's watchdog loop runs indefinitely — the default 72h
     // execution limit would kill the daemon mid-flight.
     expect(cmd).toContain('ExecutionTimeLimit ([TimeSpan]::Zero)');
+    expect(cmd).toContain('IgnoreNew');
     expect(cmd).toContain('-Force');
   });
 
   it('escapes single quotes in the launcher path', () => {
-    const cmd = buildInstallCommand("C:\\Users\\o'brien\\.feishu-codex-bridge\\daemon-launcher.cmd");
-    expect(cmd).toContain("Execute 'C:\\Users\\o''brien");
+    const cmd = buildInstallCommand(
+      "C:\\Users\\o'brien\\.feishu-codex-bridge\\daemon-launcher.cmd",
+      "C:\\Users\\o'brien\\daemon-launcher.vbs",
+      'D:\\w',
+    );
+    expect(cmd).toContain('wscript.exe');
+    expect(cmd).toContain("o''brien");
   });
 
   it('decodes GBK console output that UTF-8 mangles', () => {
@@ -32,6 +49,17 @@ describe('windows service install (non-admin Register-ScheduledTask)', () => {
   it('passes clean UTF-8 through unchanged', () => {
     const utf8 = Buffer.from('成功创建计划任务', 'utf8');
     expect(decodeConsoleOutput(utf8)).toBe('成功创建计划任务');
+  });
+
+  it('builds the hidden-window VBS wrapper that WAITS on the launcher', () => {
+    const vbs = buildLauncherVbs('C:\\Users\\测试用户\\.feishu-codex-bridge\\daemon-launcher.cmd');
+    expect(vbs).toContain('CreateObject("Wscript.Shell").Run');
+    // bWaitOnReturn=True: if wscript exits early the task instance
+    // completes and Task Scheduler tears down the daemon's process tree.
+    expect(vbs).toContain(', 0, True');
+    expect(vbs).not.toContain(', 0, False');
+    expect(vbs).toContain('daemon-launcher.cmd');
+    expect(vbs.endsWith('\r\n')).toBe(true);
   });
 
   it('appends elevation guidance when registration is access-denied', () => {

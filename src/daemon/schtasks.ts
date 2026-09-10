@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process';
-import { existsSync } from 'node:fs';
+import { existsSync, writeFileSync } from 'node:fs';
 import { mkdir, rm, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import {
@@ -7,7 +7,9 @@ import {
   daemonLogDir,
   daemonStderrPath,
   daemonStdoutPath,
+  windowsInstallPs1Path,
   windowsLauncherCmdPath,
+  windowsLauncherVbsPath,
 } from './paths';
 
 export interface LauncherInputs {
@@ -78,6 +80,12 @@ async function writeLauncherCmd(): Promise<void> {
   await mkdir(dirname(cmdPath), { recursive: true });
   await mkdir(daemonLogDir(), { recursive: true });
   await writeFile(cmdPath, content, 'utf8');
+  // UTF-16 LE with BOM — wscript reads .vbs in this encoding natively, so
+  // the non-ASCII launcher path inside survives.
+  await writeFile(
+    windowsLauncherVbsPath(),
+    Buffer.from('﻿' + buildLauncherVbs(cmdPath), 'utf16le'),
+  );
 }
 
 interface SchtasksResult {
@@ -111,18 +119,42 @@ function runSchtasks(args: string[]): SchtasksResult {
   };
 }
 
+/**
+ * A tiny VBS wrapper that starts the launcher with a fully hidden window
+ * and WAITS on it (bWaitOnReturn = True). A visible console was a real
+ * failure mode: closing it (or Ctrl+C) killed the whole daemon tree
+ * (STATUS_CONTROL_C_EXIT). But a fire-and-forget wrapper is just as fatal
+ * in the other direction: wscript exits immediately, the task instance
+ * counts as completed, and Task Scheduler tears down the process tree it
+ * started — the bridge dies right after connecting. Waiting keeps the
+ * task instance alive for as long as the daemon runs.
+ */
+export function buildLauncherVbs(launcherPath: string): string {
+  return `CreateObject("Wscript.Shell").Run Chr(34) & "${launcherPath.replace(/"/g, '""')}" & Chr(34), 0, True\r\n`;
+}
+
 /** Build the Register-ScheduledTask command for one launcher path. */
-export function buildInstallCommand(launcherPath: string): string {
+export function buildInstallCommand(launcherPath: string, vbsPath: string, workingDir: string): string {
   const esc = (s: string): string => s.replace(/'/g, "''");
   return [
     'Register-ScheduledTask',
     `-TaskName '${esc(WINDOWS_TASK_NAME)}'`,
-    '-Trigger (New-ScheduledTaskTrigger -AtLogOn)',
-    `-Action (New-ScheduledTaskAction -Execute '${esc(launcherPath)}')`,
+    // Two triggers = ARRAY syntax. Writing `-Trigger (A) -Trigger (B)`
+    // fails parameter binding ("Trigger specified multiple times").
+    // RepetitionDuration must be a finite span: ([TimeSpan]::MaxValue)
+    // serializes to P99999999DT23H59M59S, which the task XML schema
+    // rejects (SCHED_E_INVALID_VALUE) — 10 years is effectively forever.
+    '-Trigger (New-ScheduledTaskTrigger -AtLogOn), ' +
+      '(New-ScheduledTaskTrigger -Once -At (Get-Date) ' +
+      '-RepetitionInterval (New-TimeSpan -Minutes 10) ' +
+      '-RepetitionDuration (New-TimeSpan -Days 3650))',
+    `-Action (New-ScheduledTaskAction -Execute 'wscript.exe' ` +
+      `-Argument '"${esc(vbsPath)}"' -WorkingDirectory '${esc(workingDir)}')`,
     '-Settings (New-ScheduledTaskSettingsSet -StartWhenAvailable ' +
       '-AllowStartIfOnBatteries -DontStopIfGoingOnBatteries ' +
+      '-MultipleInstances IgnoreNew ' +
       '-ExecutionTimeLimit ([TimeSpan]::Zero))',
-    "-Description 'feishu-codex-bridge daemon: auto-start at logon with watchdog restart'",
+    "-Description 'lark-agents-bridge daemon: logon autostart + 10-minute self-heal, hidden window, watchdog restart'",
     '-Force',
   ].join(' ');
 }
@@ -149,11 +181,32 @@ export function withAccessDeniedGuidance(r: SchtasksResult): SchtasksResult {
  * is meant to run indefinitely) and allow battery-powered starts.
  */
 function installTaskViaPowerShell(): SchtasksResult {
-  const ps = buildInstallCommand(windowsLauncherCmdPath());
-  const r = spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', ps], {
-    encoding: 'buffer',
-    windowsHide: true,
-  });
+  const scriptPath = windowsInstallPs1Path();
+  const ps = buildInstallCommand(
+    windowsLauncherCmdPath(),
+    windowsLauncherVbsPath(),
+    process.cwd(),
+  );
+  // Write the registration as a .ps1 (UTF-8 BOM for the non-ASCII paths)
+  // and run it with -File: embedding it in -Command loses quoting battles
+  // on every console codepage, and the real error ends up invisible.
+  try {
+    // $ErrorActionPreference='Stop' makes the binding/runtime failures
+    // terminating so powershell.exe exits nonzero and the error surfaces
+    // instead of a false "install succeeded".
+    writeFileSync(scriptPath, Buffer.from('﻿$ErrorActionPreference = "Stop"\r\n' + ps + '\r\n', 'utf8'));
+  } catch (err) {
+    return {
+      ok: false,
+      stderr: `failed to write ${scriptPath}: ${(err as Error).message}`,
+      stdout: '',
+    };
+  }
+  const r = spawnSync(
+    'powershell.exe',
+    ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', scriptPath],
+    { encoding: 'buffer', windowsHide: true },
+  );
   return {
     ok: r.status === 0,
     stderr: decodeConsoleOutput(r.stderr),
@@ -162,29 +215,16 @@ function installTaskViaPowerShell(): SchtasksResult {
 }
 
 /**
- * Create (or overwrite) the logon task. Primary path: Register-ScheduledTask
- * (no elevation needed). Fallback: the legacy `schtasks /SC ONLOGON` for
- * environments where the ScheduledTasks module is unavailable (that path
- * needs an elevated console). If both fail, surface the PowerShell error —
- * it's the path modern machines should be able to use.
+ * Create (or overwrite) the logon task via Register-ScheduledTask — the
+ * only channel that works without elevation and with non-ASCII paths.
+ * No schtasks fallback: a successful legacy /Create would silently
+ * overwrite the modern task definition with one that can't run on
+ * battery and lacks the self-heal triggers.
  */
 export async function installTask(): Promise<SchtasksResult> {
   await writeLauncherCmd();
-  const viaPowerShell = installTaskViaPowerShell();
-  if (viaPowerShell.ok) return viaPowerShell;
-  const legacy = runSchtasks([
-    '/Create',
-    '/F',
-    '/SC',
-    'ONLOGON',
-    '/RL',
-    'LIMITED',
-    '/TN',
-    WINDOWS_TASK_NAME,
-    '/TR',
-    `"${windowsLauncherCmdPath()}"`,
-  ]);
-  return withAccessDeniedGuidance(legacy.ok ? legacy : viaPowerShell);
+  const result = installTaskViaPowerShell();
+  return withAccessDeniedGuidance(result);
 }
 
 /** Start the task now (regardless of trigger). */

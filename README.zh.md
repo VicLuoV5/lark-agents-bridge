@@ -12,6 +12,15 @@
 
 桥本身不需要任何 API key：每个 agent 用各自的登录态或凭据运行，按该 agent 官方方式提前配好即可，与桥无关。
 
+## v0.3.0 新功能
+
+- 同一个本机 agent 登录态可管理多个飞书 / Lark Bot 应用，无需为每个 Bot 启动一套 bridge。
+- 支持扫码创建新应用、绑定已有 App ID 与 Secret，也可通过 `/account` 直接切换档案。
+- 切换不再是“断开后盲等重连”：bridge 会先校验并连接新 Bot，再结束旧连接；原卡片会明确显示成功或失败，失败时旧 Bot 保持在线并自动回滚配置。
+- App Secret、管理员、聊天 session、命名工作空间和 agent 可见的 `lark-cli` Profile 全部按 Bot 应用隔离。
+- 手动绑定的应用通过一次性 `/claim <交接码>` 安全交接管理员权限。
+- 改进 Windows 后台启动与异常恢复，提高 Task Scheduler 启动器和崩溃看门狗的可靠性。
+
 ## 功能
 
 - 把飞书 / Lark 消息发送给本机 agent CLI（默认 Codex，也支持 Claude Code、Qwen Code、Kimi Code、CodeBuddy、DeepSeek Harness）。
@@ -23,6 +32,7 @@
 - `/cd` 和 `/ws` 切换、保存工作空间。
 - 下载聊天里的图片和文件，把本地路径交给 agent。
 - `/config` 配置访问控制、回复模式、并发、run 探活和 agent 推理强度。
+- 通过 `/account` 管理多个 Bot 应用档案并切换当前 Bot。
 - 支持前台运行，也支持 OS 托管后台运行。
 
 ## Agent 与模型供应商

@@ -1,6 +1,6 @@
 {
   "name": "lark-agents-bridge",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "description": "Bridge Feishu/Lark messenger with local coding agent CLIs (Codex, Claude Code, Qwen Code, Kimi Code, CodeBuddy, DeepSeek Harness)",
   "packageManager": "pnpm@10.0.0",
   "type": "module",

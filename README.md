@@ -12,6 +12,15 @@ This is an open-source alpha extracted from a personal deployment. It is useful 
 
 The bridge itself needs no API keys: every agent runs through its own login or credentials, set up with that agent's own tooling before the bridge starts.
 
+## What's new in v0.3.0
+
+- Manage multiple Feishu / Lark bot applications from one running bridge and one local agent login.
+- Enroll a new application by QR code, bind an existing App ID and Secret, or switch profiles directly from `/account`.
+- Switch without a blind reconnect: the bridge validates and connects the replacement first, updates the original card with a final success or failure state, and keeps the current bot online if handoff fails.
+- Isolate encrypted secrets, administrators, chat sessions, named workspaces, and agent-visible `lark-cli` profiles by bot application.
+- Secure manually bound applications with the one-time `/claim <code>` administrator handoff.
+- Improve Windows background startup and recovery with a more reliable Task Scheduler launcher and crash watchdog.
+
 ## Features
 
 - Send Feishu / Lark messages to a local agent CLI (Codex by default; Claude Code, Qwen Code, Kimi Code, CodeBuddy, and DeepSeek Harness also supported).
@@ -23,6 +32,7 @@ The bridge itself needs no API keys: every agent runs through its own login or c
 - Switch and save workspaces with `/cd` and `/ws`.
 - Download images and files from chat and pass their local paths to the agent.
 - Configure access control, reply mode, concurrency, run idle timeout, and agent reasoning effort from `/config`.
+- Manage multiple bot application profiles and switch the active bot from `/account`.
 - Run in the foreground or as an OS-managed background process.
 
 ## Agents

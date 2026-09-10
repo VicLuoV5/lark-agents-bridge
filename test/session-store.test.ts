@@ -39,4 +39,17 @@ describe('session store agent scoping', () => {
     store.set('chat-1', 's1', 'D:\\w', 'dsh');
     expect(store.resumeFor('chat-1', 'D:\\other', 'dsh')).toBeUndefined();
   });
+
+  it('migrates a legacy chat key into the current app namespace once', async () => {
+    const store = new SessionStore(join(await mkdtemp(join(tmpdir(), 'sess-test-')), 'sessions.json'));
+    store.set('chat-1', 's1', 'D:\\w', 'codex');
+    store.migrateKey('chat-1', 'app:cli_a:chat-1');
+    expect(store.getRaw('chat-1')).toBeUndefined();
+    expect(store.resumeFor('app:cli_a:chat-1', 'D:\\w', 'codex')).toBe('s1');
+    // An app that already has state must never overwrite it from legacy data.
+    store.set('chat-2', 'legacy', 'D:\\w', 'codex');
+    store.set('app:cli_b:chat-2', 'owned', 'D:\\w', 'codex');
+    store.migrateKey('chat-2', 'app:cli_b:chat-2');
+    expect(store.resumeFor('app:cli_b:chat-2', 'D:\\w', 'codex')).toBe('owned');
+  });
 });

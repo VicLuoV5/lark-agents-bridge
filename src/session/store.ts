@@ -106,6 +106,14 @@ export class SessionStore {
     this.schedulePersist();
   }
 
+  /** Move a legacy chat key into an account namespace on its first access. */
+  migrateKey(legacyKey: string, scopedKey: string): void {
+    if (legacyKey === scopedKey || this.data[scopedKey] || !this.data[legacyKey]) return;
+    this.data[scopedKey] = this.data[legacyKey]!;
+    delete this.data[legacyKey];
+    this.schedulePersist();
+  }
+
   /** Per-scope idle-timeout override. `undefined` means no override set. */
   getIdleTimeoutMinutes(chatId: string): number | undefined {
     return this.data[chatId]?.idleTimeoutMinutes;

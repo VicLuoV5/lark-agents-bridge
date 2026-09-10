@@ -27,11 +27,10 @@ export async function loadConfig(path: string = paths.configFile): Promise<Parti
  * users don't lose unrelated settings on credential update.
  *
  * The provider command is a thin shell wrapper bridge writes under
- * `~/.feishu-codex-bridge/secrets-getter` (always user-owned, never a symlink) so
- * lark-cli's AssertSecurePath audit accepts it regardless of how node was
- * installed (Homebrew / Volta / system pkg may put node behind a symlink
- * or root-own it). The wrapper internally `exec`s the real node + bridge
- * with `secrets get`. Bridge itself short-circuits the spawn and reads the
+ * `~/.feishu-codex-bridge/secrets-getter` (always user-owned, never a symlink)
+ * so the config can refer to encrypted local secrets without a plaintext
+ * App Secret. The wrapper internally `exec`s the real node + bridge with
+ * `secrets get`. Bridge itself short-circuits the spawn and reads the
  * keystore directly when it sees its own wrapper path in `command`.
  */
 export async function buildEncryptedAccountConfig(

@@ -4,16 +4,27 @@ import type { LarkChannel, NormalizedMessage } from '@larksuiteoapi/node-sdk';
 import type { AgentAdapter } from '../agent/types';
 import type { ActiveRuns } from '../bot/active-runs';
 import {
+  accountAddCard,
   accountCurrentCard,
+  accountEnrollSuccessCard,
   accountFailureCard,
   accountFormCard,
-  accountSuccessCard,
+  accountListCard,
+  accountQrCard,
+  accountSwitchConnectedCard,
+  accountSwitchFailedCard,
+  accountSwitchProgressCard,
+  accountTakeoverCard,
 } from '../card/account-cards';
 import { configCancelledCard, configFormCard, configSavedCard } from '../card/config-card';
 import { forgetManagedCard, sendManagedCard, updateManagedCard } from '../card/managed';
 import { helpCard, resumeCard, statusCard, workspacesCard } from '../card/templates';
-import type { AgentConfig, AppConfig, MessageReplyMode, SecretInput, TenantBrand } from '../config/schema';
+import type { AccountProfile, AgentConfig, AppConfig, MessageReplyMode, SecretInput, TenantBrand } from '../config/schema';
 import {
+  getAccountProfiles,
+  accountScope,
+  claimPendingAdminHandoff,
+  ensureAccountProfiles,
   getAgentApiKeyRef,
   getAgentModel,
   getAgentPermissionMode,
@@ -30,9 +41,13 @@ import {
   isCodexPermissionMode,
   isAdmin,
   secretKeyForApp,
+  switchActiveAccount,
+  switchableAccountProfiles,
+  upsertAccountProfile,
 } from '../config/schema';
 import { PROVIDER_PROFILES, secretKeyForProvider } from '../config/provider-profiles';
-import { setSecret } from '../config/keystore';
+import { getSecret, removeSecret, setSecret } from '../config/keystore';
+import { registerAppViaChat } from '../bot/wizard';
 import { buildEncryptedAccountConfig, saveConfig } from '../config/store';
 import { log, readRecentLogs, sanitizeLogsForDoctor } from '../core/logger';
 import { renderCard } from '../card/run-renderer';
@@ -52,9 +67,10 @@ import { isInsideWorkspaceRoot, resolveWorkspacePath, workspaceRoot } from '../w
 import { createBoundChat, defaultChatName } from '../bot/group';
 
 export interface Controls {
-  /** Restart the bridge in-process: disconnect WS, kill agent runs, reload
-   * config, reconnect with the new credentials. */
-  restart(): Promise<void>;
+  /** Restart the bridge in-process. The replacement connects before the old
+   * channel is disconnected; `beforeDisconnect` can therefore publish a
+   * terminal handoff state through both applications. */
+  restart(options?: RestartOptions): Promise<void>;
   /** Stop this whole process gracefully (disconnect + exit). Used by /exit
    * when the user targets the receiving process itself. */
   exit(): Promise<void>;
@@ -112,6 +128,7 @@ const handlers: Record<string, Handler> = {
   '/exit': handleExit,
   '/doctor': handleDoctor,
   '/reconnect': handleReconnect,
+  '/claim': handleClaim,
 };
 
 /**
@@ -156,6 +173,32 @@ export async function tryHandleCommand(ctx: CommandContext): Promise<boolean> {
     log.fail('command', err, { cmd });
   }
   return true;
+}
+
+export interface RestartOptions {
+  beforeDisconnect?: (next: { channel: LarkChannel; cfg: AppConfig }) => Promise<void>;
+}
+
+async function handleClaim(args: string, ctx: CommandContext): Promise<void> {
+  if (ctx.chatMode !== 'p2p') {
+    await reply(ctx, '❌ 管理员交接只能在与新 bot 的私聊中完成。');
+    return;
+  }
+  const code = args.trim();
+  if (!code || !claimPendingAdminHandoff(ctx.controls.cfg, code, ctx.msg.senderId)) {
+    await reply(ctx, '❌ 交接码无效或已使用。请回到旧 bot 获取新的切换提示。');
+    return;
+  }
+  try {
+    await saveConfig(ctx.controls.cfg, ctx.controls.configPath);
+    await reply(
+      ctx,
+      '✅ 管理员交接完成。当前 bot 已连接并接管本机 Agent；你现在可以继续对话，并使用 `/account` 和 `/config`。',
+    );
+  } catch (err) {
+    log.fail('command', err, { step: 'admin-handoff-claim' });
+    await reply(ctx, '❌ 管理员交接保存失败，请重试。');
+  }
 }
 
 /** Invoke a named command handler (e.g. from a card button click). */
@@ -242,7 +285,7 @@ async function handleNewChat(rawName: string, ctx: CommandContext): Promise<void
 
   // Inherit cwd from the originating chat so the new group starts in the
   // same workspace.
-  ctx.workspaces.setCwd(created.chatId, sourceCwd);
+  ctx.workspaces.setCwd(accountScope(ctx.controls.cfg.accounts.app.id, created.chatId), sourceCwd);
 
   // Welcome the user inside the new group with a hint about how to start.
   const welcome = `🎉 群已建好，cwd 继承自原群：\`${sourceCwd}\`\n\n@我 + 任意消息开始对话。`;
@@ -309,7 +352,8 @@ async function handleWs(args: string, ctx: CommandContext): Promise<void> {
 }
 
 async function handleWsList(ctx: CommandContext): Promise<void> {
-  const named = ctx.workspaces.listNamed();
+  const accountId = ctx.controls.cfg.accounts.app.id;
+  const named = ctx.workspaces.listNamed(accountId);
   const currentCwd = ctx.workspaces.cwdFor(ctx.scope) ?? workspaceRoot();
   const card = workspacesCard(currentCwd, named);
   await ctx.channel.send(ctx.msg.chatId, { card }, { replyTo: ctx.msg.messageId });
@@ -321,7 +365,7 @@ async function handleWsSave(name: string, ctx: CommandContext): Promise<void> {
     return;
   }
   const cwd = ctx.workspaces.cwdFor(ctx.scope) ?? workspaceRoot();
-  ctx.workspaces.saveNamed(name, cwd);
+  ctx.workspaces.saveNamed(name, cwd, ctx.controls.cfg.accounts.app.id);
   await reply(ctx, `✓ 工作空间已保存：\`${name}\` → ${cwd}`);
 }
 
@@ -330,7 +374,7 @@ async function handleWsUse(name: string, ctx: CommandContext): Promise<void> {
     await reply(ctx, '用法：`/ws use <name>`');
     return;
   }
-  const cwd = ctx.workspaces.getNamed(name);
+  const cwd = ctx.workspaces.getNamed(name, ctx.controls.cfg.accounts.app.id);
   if (!cwd) {
     await reply(ctx, `未找到工作空间：\`${name}\``);
     return;
@@ -353,7 +397,7 @@ async function handleWsRemove(name: string, ctx: CommandContext): Promise<void> 
     await reply(ctx, '用法：`/ws remove <name>`');
     return;
   }
-  if (!ctx.workspaces.removeNamed(name)) {
+  if (!ctx.workspaces.removeNamed(name, ctx.controls.cfg.accounts.app.id)) {
     await reply(ctx, `未找到工作空间：\`${name}\``);
     return;
   }
@@ -739,31 +783,248 @@ async function handleHelp(_args: string, ctx: CommandContext): Promise<void> {
 // ─── /account ─────────────────────────────────────────────────────────────
 
 async function handleAccount(args: string, ctx: CommandContext): Promise<void> {
-  const sub = args.trim().split(/\s+/)[0] ?? '';
+  const parts = args.trim().split(/\s+/);
+  const sub = parts[0] ?? '';
   switch (sub) {
     case '':
       return showCurrent(ctx);
+    case 'list':
+      return showAccountList(ctx);
+    case 'add':
+      return showAddCard(ctx);
+    case 'add.qr':
+      return startAccountQrEnrollment(ctx);
     case 'change':
       return showForm(ctx);
     case 'submit':
       return submitAccount(ctx);
+    case 'switch': {
+      // Text-command switching: `/account switch <index|appId>` — works even
+      // when card callbacks are intercepted (e.g. unbound lark-cli layers).
+      const target = parts[1] ?? '';
+      if (target) return switchAccountByTarget(ctx, target);
+      return submitAccountSwitch(ctx);
+    }
     case 'cancel':
       return cancelAccount(ctx);
     default:
-      await reply(ctx, '用法：`/account` 或 `/account change`');
+      await reply(ctx, '用法：`/account`、`/account add`、`/account list`、`/account switch <序号>` 或 `/account change`');
   }
 }
 
+/** Resolve a switch target by 1-based list index or appId, validate, swap. */
+async function switchAccountByTarget(ctx: CommandContext, target: string): Promise<void> {
+  const profiles = switchableAccountProfiles(ctx.controls.cfg);
+  const byIndex = /^\d+$/.test(target) ? profiles[Number(target) - 1] : undefined;
+  const profile = byIndex ?? profiles.find((p) => p.appId === target);
+  if (!profile) {
+    const list = profiles.map((p, i) => `${i + 1}. ${p.name}`).join('\n') || '（空）';
+    await reply(ctx, `❌ 找不到账号「${target}」。当前档案：\n${list}`);
+    return;
+  }
+  if (profile.appId === ctx.controls.cfg.accounts.app.id) {
+    await reply(ctx, `ℹ️ ${profile.name} 已是当前账号。`);
+    return;
+  }
+  await performAccountSwitch(ctx, profile);
+}
+
+/**
+ * Shared switch: validate the target's stored credentials, swap the active
+ * app, restart. Throws nothing — failures are reported via `reply`.
+ */
+async function performAccountSwitch(
+  ctx: CommandContext,
+  target: AccountProfile,
+): Promise<void> {
+  const secret = await getSecret(secretKeyForApp(target.appId)).catch(() => undefined);
+  if (!secret) {
+    await reply(ctx, `❌ ${target.name} 的 Secret 在本机 keystore 中缺失，请通过 /account add 重新录入。`);
+    return;
+  }
+  const v = await validateAppCredentials(target.appId, secret, target.tenant);
+  if (!v.ok) {
+    await reply(ctx, `❌ 校验失败（${target.name}）：${v.reason ?? 'unknown'}`);
+    return;
+  }
+  const fromName = ctx.channel.botIdentity?.name ?? ctx.controls.cfg.accounts.app.id;
+  const toName = v.botName ?? target.name;
+  const previousCfg = structuredClone(ctx.controls.cfg);
+  const nextCfg = structuredClone(ctx.controls.cfg);
+  const switched = switchActiveAccount(nextCfg, { ...target, name: toName }, {
+    outgoingName: ctx.channel.botIdentity?.name,
+  });
+  try {
+    await saveConfig(nextCfg, ctx.controls.configPath);
+  } catch (err) {
+    await reply(ctx, `❌ 保存配置失败：${err instanceof Error ? err.message : String(err)}`);
+    return;
+  }
+  const seedNote = switched.handoffCode
+    ? `请私聊新 bot 发送：\`/claim ${switched.handoffCode}\`，完成管理员交接。`
+    : undefined;
+  await reply(
+    ctx,
+    `⏳ **正在切换**\n\n${fromName} → **${toName}**\n\n_正在建立连接，通常需要 3–8 秒。请等待最终结果。_` +
+      (seedNote ? `\n\nℹ️ ${seedNote}` : ''),
+  );
+  try {
+    await ctx.controls.restart({
+      beforeDisconnect: async ({ channel: nextChannel, cfg }) => {
+        await reply(
+          ctx,
+          `✅ **切换完成**\n\n${fromName} → **${toName}**\n\n连接已恢复，新 bot 已接管本机 Agent。请前往新 bot 的会话继续使用。` +
+            (seedNote ? `\n\nℹ️ ${seedNote}` : ''),
+        );
+        await sendAccountTakeoverNotice(nextChannel, cfg, toName, fromName);
+      },
+    });
+  } catch (err) {
+    const reason = err instanceof Error ? err.message : String(err);
+    const rollbackError = await restoreAccountConfig(previousCfg, ctx.controls.configPath);
+    await reply(
+      ctx,
+      rollbackError
+        ? `❌ **切换失败**：${reason}\n\n旧 bot 仍在线，但配置回滚失败：${rollbackError}\n请不要重启服务，并检查本机配置。`
+        : `❌ **切换失败**：${reason}\n\n当前仍由 **${fromName}** 提供服务，原配置已恢复。`,
+    );
+  }
+}
+
+async function restoreAccountConfig(cfg: AppConfig, configPath: string): Promise<string | undefined> {
+  try {
+    await saveConfig(cfg, configPath);
+    return undefined;
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    log.fail('account', err, { step: 'switch-rollback' });
+    return message;
+  }
+}
+
+async function restoreAccountSecret(
+  secretKey: string,
+  previousSecret: string | undefined,
+): Promise<string | undefined> {
+  try {
+    if (previousSecret === undefined) await removeSecret(secretKey);
+    else await setSecret(secretKey, previousSecret);
+    return undefined;
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    log.fail('account', err, { step: 'switch-secret-rollback' });
+    return message;
+  }
+}
+
+async function sendAccountTakeoverNotice(
+  channel: LarkChannel,
+  cfg: AppConfig,
+  toName: string,
+  fromName: string,
+): Promise<void> {
+  const adminOpenId = cfg.preferences?.access?.admins?.[0];
+  if (!adminOpenId) return;
+  await channel.rawClient.im.v1.message.create({
+    params: { receive_id_type: 'open_id' },
+    data: {
+      receive_id: adminOpenId,
+      msg_type: 'interactive',
+      content: JSON.stringify(accountTakeoverCard(toName, fromName)),
+    },
+  }).catch((err) => {
+    log.warn('account', 'takeover-notice-failed', {
+      appId: cfg.accounts.app.id,
+      err: err instanceof Error ? err.message : String(err),
+    });
+  });
+}
+
 async function showCurrent(ctx: CommandContext): Promise<void> {
-  // Current-status card has only a [更换凭据] button — never updated in-place,
-  // so an inline card is sufficient (and avoids creating a managed card we'd
-  // never re-touch).
+  // Current-status card has buttons (list / add / change) — never updated
+  // in-place, so an inline card is sufficient (and avoids creating a
+  // managed card we'd never re-touch).
   const card = accountCurrentCard({
     appId: ctx.controls.cfg.accounts.app.id,
     botName: ctx.channel.botIdentity?.name,
     tenant: ctx.controls.cfg.accounts.app.tenant,
+    profiles: switchableAccountProfiles(ctx.controls.cfg),
   });
   await ctx.channel.send(ctx.msg.chatId, { card }, { replyTo: ctx.msg.messageId });
+}
+
+async function showAccountList(ctx: CommandContext): Promise<void> {
+  const card = accountListCard({
+    currentAppId: ctx.controls.cfg.accounts.app.id,
+    currentBotName: ctx.channel.botIdentity?.name,
+    profiles: switchableAccountProfiles(ctx.controls.cfg),
+  });
+  // Do not recall the source card inside its own action callback. Feishu may
+  // reject the callback acknowledgement with code 200530 if the carrier
+  // message disappears before it confirms the click. Leave it as history and
+  // await the new managed card so callback completion means send completion.
+  await sendManagedCard(ctx.channel, ctx.msg.chatId, card);
+}
+
+async function showAddCard(ctx: CommandContext): Promise<void> {
+  if (ctx.fromCardAction) await recallMessage(ctx, ctx.msg.messageId);
+  await ctx.channel.send(ctx.msg.chatId, { card: accountAddCard() });
+}
+
+// ─── /account add — QR enrollment (agent-driven, no manual credentials) ──
+
+let qrEnrollmentInFlight = false;
+
+async function startAccountQrEnrollment(ctx: CommandContext): Promise<void> {
+  if (qrEnrollmentInFlight) {
+    await reply(ctx, '⚠️ 已有一个账号录入在进行中，请先完成或稍后再试。');
+    return;
+  }
+  qrEnrollmentInFlight = true;
+  const channel = ctx.channel;
+  const chatId = ctx.msg.chatId;
+  const cfg = ctx.controls.cfg;
+  const configPath = ctx.controls.configPath;
+  // The SDK promise resolves only after the user completes the scan; cap
+  // the wait well beyond the QR expiry so a stalled flow can't hang forever.
+  const timeout = new Promise<never>((_, reject) => {
+    setTimeout(() => reject(new Error('录入超时：二维码已过期，请重发 /account add 重试。')), 15 * 60_000);
+  });
+
+  void (async () => {
+    try {
+      const result = await Promise.race([
+        registerAppViaChat(async (update) => {
+          await channel.send(chatId, { card: accountQrCard(update.url, update.expireMinutes) });
+        }),
+        timeout,
+      ]);
+      const appId = result.clientId;
+      const v = await validateAppCredentials(appId, result.clientSecret, result.tenant);
+      if (!v.ok) {
+        await channel.send(chatId, {
+          card: accountFailureCard(`扫码创建的应用校验失败：${v.reason ?? 'unknown'}`),
+        });
+        return;
+      }
+      await setSecret(secretKeyForApp(appId), result.clientSecret);
+      upsertAccountProfile(cfg, {
+        name: v.botName ?? appId,
+        appId,
+        tenant: result.tenant,
+        access: result.operatorOpenId ? { admins: [result.operatorOpenId] } : {},
+      });
+      await saveConfig(cfg, configPath);
+      await channel.send(chatId, { card: accountEnrollSuccessCard(v.botName ?? appId, appId) });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      await channel.send(chatId, { card: accountFailureCard(`录入失败：${msg}`) }).catch(() => {});
+      // A late resolution after the timeout is intentionally discarded —
+      // the user was told to retry and nothing was persisted.
+    } finally {
+      qrEnrollmentInFlight = false;
+    }
+  })().catch((err) => log.fail('command', err, { step: 'account-qr' }));
 }
 
 async function showForm(ctx: CommandContext): Promise<void> {
@@ -813,16 +1074,6 @@ async function submitAccount(ctx: CommandContext): Promise<void> {
       }
     };
 
-    // Success path: in-place update. The card never accepts another submit
-    // (success card has no form), so this is fine.
-    const finishSuccess = async (card: object): Promise<void> => {
-      await waitForSettle();
-      await updateManagedCard(channel, formMsgId, card).catch((err) =>
-        console.warn('[account] form update failed:', err),
-      );
-      forgetManagedCard(formMsgId);
-    };
-
     // Failure path: leave the old form card as a static "❌ 校验失败" record
     // (in-place update to a non-form card so it stops responding to clicks),
     // then post a fresh managed form card below for retry. We can't reuse
@@ -859,34 +1110,99 @@ async function submitAccount(ctx: CommandContext): Promise<void> {
 
     // Encrypted-at-rest path: store the plaintext secret in the AES keystore,
     // and write config.json with an exec-provider SecretRef instead of the
-    // raw secret. lark-cli's `config bind --source feishu-codex-bridge` reads the
-    // same SecretRef and goes through the exec protocol to retrieve the
-    // plaintext into its own OS keychain — no plaintext on disk.
+    // raw secret. The agent-visible lark-cli Profile is provisioned during
+    // restart from this encrypted source; neither config.json nor logs carry
+    // the plaintext.
+    const previousCfg = structuredClone(ctx.controls.cfg);
+    const secretKey = secretKeyForApp(appId);
+    let previousSecret: string | undefined;
+    let secretWritten = false;
     let newCfg: AppConfig;
+    let handoffCode: string | undefined;
     try {
-      newCfg = await buildEncryptedAccountConfig(
+      // Capture the previous target secret before overwriting it so a failed
+      // handshake can restore both config.json and the encrypted keystore.
+      previousSecret = await getSecret(secretKey);
+      ensureAccountProfiles(ctx.controls.cfg);
+      const prevApp = ctx.controls.cfg.accounts.app;
+      newCfg = await buildEncryptedAccountConfig(prevApp.id, prevApp.tenant, ctx.controls.cfg.preferences);
+      await setSecret(secretKey, appSecret);
+      secretWritten = true;
+      newCfg.accounts.profiles = structuredClone(getAccountProfiles(ctx.controls.cfg));
+      const existingTarget = getAccountProfiles(newCfg).find((profile) => profile.appId === appId);
+      upsertAccountProfile(newCfg, {
+        name: result.botName ?? appId,
         appId,
         tenant,
-        ctx.controls.cfg.preferences,
-      );
-      await setSecret(secretKeyForApp(appId), appSecret);
+        // Re-entering credentials for an existing profile must not erase its
+        // app-scoped admins/allowlists and force an unnecessary re-claim.
+        ...(existingTarget?.access ? { access: existingTarget.access } : {}),
+      });
+      const target = getAccountProfiles(newCfg).find((p) => p.appId === appId);
+      if (!target) throw new Error('new account profile missing after save');
+      handoffCode = switchActiveAccount(newCfg, target, {
+        outgoingName: ctx.channel.botIdentity?.name,
+      }).handoffCode;
       await saveConfig(newCfg, configPath);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      await finishFailure(`保存凭据失败：${msg}`);
+      const rollbackError = secretWritten
+        ? await restoreAccountSecret(secretKey, previousSecret)
+        : undefined;
+      await finishFailure(
+        rollbackError
+          ? `保存凭据失败：${msg}；旧 Secret 恢复失败：${rollbackError}`
+          : `保存凭据失败：${msg}`,
+      );
       return;
     }
 
-    await finishSuccess(accountSuccessCard({ appId, botName: result.botName, tenant }));
-
-    // Give the user 1.5s to read the success state before we tear down the
-    // WS and reconnect with new credentials.
-    setTimeout(() => {
-      void restart().catch((err) => {
-        console.error('[account] restart failed:', err);
-        process.exit(1);
+    const fromName = channel.botIdentity?.name ?? previousCfg.accounts.app.id;
+    const toName = result.botName ?? appId;
+    const handoffNote = handoffCode
+      ? `新 bot 的管理员尚未绑定。请私聊新 bot 发送：\`/claim ${handoffCode}\``
+      : undefined;
+    await waitForSettle();
+    await updateManagedCard(
+      channel,
+      formMsgId,
+      accountSwitchProgressCard(fromName, toName, handoffNote),
+    ).catch((err) => log.warn('account', 'change-progress-update-failed', { err: String(err) }));
+    try {
+      await restart({
+        beforeDisconnect: async ({ channel: nextChannel, cfg }) => {
+          await updateManagedCard(
+            channel,
+            formMsgId,
+            accountSwitchConnectedCard(fromName, toName, new Date(), handoffNote),
+          ).catch((err) =>
+            log.warn('account', 'change-connected-update-failed', { err: String(err) }),
+          );
+          forgetManagedCard(formMsgId);
+          await sendAccountTakeoverNotice(nextChannel, cfg, toName, fromName);
+        },
       });
-    }, 1500);
+    } catch (err) {
+      const reason = err instanceof Error ? err.message : String(err);
+      const rollbackErrors = [
+        await restoreAccountConfig(previousCfg, configPath),
+        await restoreAccountSecret(secretKey, previousSecret),
+      ].filter((message): message is string => Boolean(message));
+      await updateManagedCard(
+        channel,
+        formMsgId,
+        accountSwitchFailedCard(
+          fromName,
+          toName,
+          reason,
+          rollbackErrors.length === 0,
+          rollbackErrors.join('；'),
+        ),
+      ).catch((updateErr) =>
+        log.warn('account', 'change-failed-update-failed', { err: String(updateErr) }),
+      );
+      forgetManagedCard(formMsgId);
+    }
   })();
 }
 
@@ -898,6 +1214,120 @@ async function recallMessage(ctx: CommandContext, messageId: string): Promise<vo
   } catch (err) {
     console.warn('[recall failed]', err);
   }
+}
+
+// ─── /account switch — text command (index) + profile-list form submit ───
+
+async function submitAccountSwitch(ctx: CommandContext): Promise<void> {
+  const fv = ctx.formValue ?? {};
+  const targetId = String(fv.account_switch_target ?? '').trim();
+  const formMsgId = ctx.msg.messageId;
+  const channel = ctx.channel;
+  const configPath = ctx.controls.configPath;
+  const restart = ctx.controls.restart;
+
+  void (async () => {
+    const submittedAt = Date.now();
+    const waitForSettle = async (): Promise<void> => {
+      const elapsed = Date.now() - submittedAt;
+      if (elapsed < FORM_SETTLE_MS) {
+        await new Promise<void>((r) => setTimeout(r, FORM_SETTLE_MS - elapsed));
+      }
+    };
+    const freshList = (errorMessage?: string): object => {
+      const cfg = ctx.controls.cfg;
+      return accountListCard({
+        currentAppId: cfg.accounts.app.id,
+        currentBotName: channel.botIdentity?.name,
+        profiles: switchableAccountProfiles(cfg),
+        errorMessage,
+      });
+    };
+
+    const target = switchableAccountProfiles(ctx.controls.cfg).find((p) => p.appId === targetId);
+    const fail = async (message: string, resendList: boolean): Promise<void> => {
+      await waitForSettle();
+      await updateManagedCard(channel, formMsgId, accountFailureCard(message)).catch((err) =>
+        log.warn('account', 'switch-update-failed', { err: String(err) }),
+      );
+      forgetManagedCard(formMsgId);
+      if (resendList) {
+        await channel
+          .send(ctx.msg.chatId, { card: freshList() })
+          .catch((err) => log.warn('account', 'switch-list-send-failed', { err: String(err) }));
+      }
+    };
+
+    if (!target) {
+      await fail('账号档案不存在，请刷新列表。', true);
+      return;
+    }
+    if (target.appId === ctx.controls.cfg.accounts.app.id) {
+      await fail('该账号已是当前账号。', false);
+      return;
+    }
+    const secret = await getSecret(secretKeyForApp(target.appId)).catch(() => undefined);
+    if (!secret) {
+      await fail(
+        '该账号的 Secret 在本机 keystore 中缺失，请通过「绑定已有应用」重新录入。',
+        true,
+      );
+      return;
+    }
+    const v = await validateAppCredentials(target.appId, secret, target.tenant);
+    if (!v.ok) {
+      await fail(`校验失败：${v.reason ?? 'unknown'}`, true);
+      return;
+    }
+
+    const fromName = channel.botIdentity?.name ?? ctx.controls.cfg.accounts.app.id;
+    const toName = v.botName ?? target.name;
+    const previousCfg = structuredClone(ctx.controls.cfg);
+    const nextCfg = structuredClone(ctx.controls.cfg);
+    const result = switchActiveAccount(nextCfg, { ...target, name: toName }, {
+      outgoingName: channel.botIdentity?.name,
+    });
+    try {
+      await saveConfig(nextCfg, configPath);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      await fail(`保存配置失败：${msg}`, false);
+      return;
+    }
+    const seedNote = result.handoffCode
+      ? `新 bot 的管理员尚未绑定。请私聊新 bot 发送：\`/claim ${result.handoffCode}\``
+      : undefined;
+    await waitForSettle();
+    await updateManagedCard(channel, formMsgId, accountSwitchProgressCard(fromName, toName, seedNote)).catch(
+      (err) => log.warn('account', 'switch-update-failed', { err: String(err) }),
+    );
+    try {
+      await restart({
+        beforeDisconnect: async ({ channel: nextChannel, cfg }) => {
+          await updateManagedCard(
+            channel,
+            formMsgId,
+            accountSwitchConnectedCard(fromName, toName, new Date(), seedNote),
+          ).catch((err) =>
+            log.warn('account', 'switch-connected-update-failed', { err: String(err) }),
+          );
+          forgetManagedCard(formMsgId);
+          await sendAccountTakeoverNotice(nextChannel, cfg, toName, fromName);
+        },
+      });
+    } catch (err) {
+      const reason = err instanceof Error ? err.message : String(err);
+      const rollbackError = await restoreAccountConfig(previousCfg, configPath);
+      await updateManagedCard(
+        channel,
+        formMsgId,
+        accountSwitchFailedCard(fromName, toName, reason, !rollbackError, rollbackError),
+      ).catch((updateErr) =>
+        log.warn('account', 'switch-failed-update-failed', { err: String(updateErr) }),
+      );
+      forgetManagedCard(formMsgId);
+    }
+  })();
 }
 
 // ────────────── /config — preferences form ──────────────
@@ -1158,6 +1588,14 @@ async function submitConfig(ctx: CommandContext): Promise<void> {
       // (isUserAllowed / isAdmin both treat length===0 as unrestricted).
       access: { allowedUsers, allowedChats, admins },
     };
+    // `preferences.access` is the live view for the selected application.
+    // Keep the saved profile in sync so switching away and back never
+    // restores stale rules or an old app's open_ids.
+    ensureAccountProfiles(ctx.controls.cfg);
+    const currentProfile = getAccountProfiles(ctx.controls.cfg).find(
+      (profile) => profile.appId === ctx.controls.cfg.accounts.app.id,
+    );
+    if (currentProfile) currentProfile.access = { allowedUsers, allowedChats, admins };
     // The agent section now owns reasoning/permission values — drop the
     // legacy top-level fields so the config carries one source of truth.
     delete ctx.controls.cfg.preferences.codexReasoningEffort;

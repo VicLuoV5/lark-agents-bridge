@@ -93,7 +93,7 @@ const secrets = program
 
 secrets
   .command('get')
-  .description('Exec-provider protocol: read JSON request from stdin, write JSON response to stdout. Used by lark-cli config bind --source lark-codex-bridge.')
+  .description('Exec-provider protocol: read JSON request from stdin and write the encrypted local secret response to stdout.')
   .action(async () => {
     await runSecretsGet();
   });

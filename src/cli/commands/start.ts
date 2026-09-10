@@ -9,8 +9,16 @@ import type { Controls } from '../../commands';
 import { setSecret } from '../../config/keystore';
 import { paths } from '../../config/paths';
 import type { AppConfig } from '../../config/schema';
-import { getAgentPermissionMode, getAgentProvider, getAgentType, isComplete, secretKeyForApp } from '../../config/schema';
-import { resolveAgentSecret } from '../../config/secret-resolver';
+import {
+  activeAccountProfile,
+  ensureAccountProfiles,
+  getAgentPermissionMode,
+  getAgentProvider,
+  getAgentType,
+  isComplete,
+  secretKeyForApp,
+} from '../../config/schema';
+import { resolveAgentSecret, resolveAppSecret } from '../../config/secret-resolver';
 import {
   buildEncryptedAccountConfig,
   ensureSecretsGetterWrapper,
@@ -30,6 +38,8 @@ import {
 } from '../../runtime/registry';
 import { SessionStore } from '../../session/store';
 import { WorkspaceStore } from '../../workspace/store';
+import { workspaceRoot } from '../../workspace/guard';
+import { ensureLarkCliProfile } from '../../runtime/lark-cli-profile';
 
 // Prefer IPv4 — Node 20+ defaults to "verbatim" which respects whatever
 // the resolver returns first; in IPv6-broken networks (WSL2, certain VPNs,
@@ -120,7 +130,13 @@ export async function runStart(opts: StartOptions): Promise<void> {
     console.log(`配置已保存到 ${configPath}\n`);
   }
 
+  // Upgrade the legacy "current app + inactive accounts" layout before any
+  // command handler can mutate it. Persist this harmless metadata migration
+  // once so restarts and watchdog recovery see the same registry.
+  if (ensureAccountProfiles(cfg)) await saveConfig(cfg, configPath);
+
   await preFlightChecks({ skipCheckLarkCli: opts.skipCheckLarkCli });
+  await provisionActiveLarkCliProfile(cfg);
 
   // Resolve the configured agent (preferences.agent.type, default codex)
   // and verify its CLI exists before wiring the bridge.
@@ -197,12 +213,18 @@ export async function runStart(opts: StartOptions): Promise<void> {
     async exit() {
       await stop('exit-command');
     },
-    async restart() {
-      if (restarting) return;
+    async restart(options) {
+      if (restarting) throw new Error('bridge restart already in progress');
       restarting = true;
+      const oldBridge = bridge;
+      const oldConfig = controls.cfg;
+      let candidateBridge: BridgeChannel | undefined;
+      oldBridge.drain();
       try {
         const next = await loadConfig(configPath);
         if (!isComplete(next)) throw new Error('config incomplete after change');
+        if (ensureAccountProfiles(next)) await saveConfig(next, configPath);
+        await provisionActiveLarkCliProfile(next);
         console.log(
           `[restart] connecting new bridge with appId=${next.accounts.app.id} tenant=${next.accounts.app.tenant}...`,
         );
@@ -219,6 +241,10 @@ export async function runStart(opts: StartOptions): Promise<void> {
         if (nextResolution.error || !nextResolution.adapter) {
           throw new Error(nextResolution.error ?? 'agent 不可用');
         }
+        // New handlers must observe the candidate account while they start.
+        // The old bridge is drained, so temporarily swapping this shared
+        // snapshot cannot route old-app events into the new account scope.
+        controls.cfg = next;
         const next_bridge = await startChannel({
           cfg: next,
           agent: nextResolution.adapter,
@@ -226,14 +252,16 @@ export async function runStart(opts: StartOptions): Promise<void> {
           workspaces,
           controls,
         });
+        candidateBridge = next_bridge;
+        await options?.beforeDisconnect?.({ channel: next_bridge.channel, cfg: next });
+        bridge = next_bridge;
+        candidateBridge = undefined;
         console.log('[restart] disconnecting old bridge...');
         try {
-          await bridge.disconnect();
+          await oldBridge.disconnect();
         } catch (err) {
           console.warn('[restart] old disconnect failed:', err);
         }
-        bridge = next_bridge;
-        controls.cfg = next;
         // Keep the registry in sync so /ps reflects the new app after an
         // /account change. Same process id, new app fields.
         await updateEntry(entry.id, {
@@ -245,6 +273,15 @@ export async function runStart(opts: StartOptions): Promise<void> {
           log.warn('registry', 'update-failed', { err: String(err) }),
         );
         console.log('✓ 已用新凭据重连');
+      } catch (err) {
+        if (candidateBridge) {
+          await candidateBridge.disconnect().catch((disconnectErr) =>
+            log.warn('restart', 'candidate-disconnect-failed', { err: String(disconnectErr) }),
+          );
+        }
+        controls.cfg = oldConfig;
+        oldBridge.resume();
+        throw err;
       } finally {
         restarting = false;
       }
@@ -274,6 +311,29 @@ export async function runStart(opts: StartOptions): Promise<void> {
 
   // keep the event loop alive until a signal arrives
   await new Promise<void>(() => {});
+}
+
+async function provisionActiveLarkCliProfile(cfg: AppConfig): Promise<void> {
+  const profile = activeAccountProfile(cfg);
+  const secret = await resolveAppSecret(cfg);
+  const result = await ensureLarkCliProfile({
+    workspace: workspaceRoot(),
+    profile: profile.larkCliProfile!,
+    appId: cfg.accounts.app.id,
+    appSecret: secret,
+    tenant: cfg.accounts.app.tenant,
+  });
+  if (result.configured) {
+    log.info('lark-cli', 'profile-ready', { profile: profile.larkCliProfile, appId: cfg.accounts.app.id });
+  } else {
+    // `lark-cli` is optional for regular bot messages. Keep the bridge up,
+    // but make agent-originated API calls diagnosable without exposing secret.
+    log.warn('lark-cli', 'profile-unavailable', {
+      profile: profile.larkCliProfile,
+      appId: cfg.accounts.app.id,
+      reason: result.reason,
+    });
+  }
 }
 
 /**

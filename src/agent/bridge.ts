@@ -62,7 +62,10 @@ export interface AgentRunEnv {
  * npm-global-bin fixup + the workspace-local lark-cli shim (so the agent
  * can call Feishu APIs from inside sandboxed tool runs).
  */
-export function prepareAgentEnv(cwd: string = workspaceRoot()): AgentRunEnv {
+export function prepareAgentEnv(
+  cwd: string = workspaceRoot(),
+  larkCliProfile?: string,
+): AgentRunEnv {
   const larkCli = ensureLarkCliShim(cwd);
   const env = withWindowsNpmGlobalBin({ ...process.env });
   if (larkCli) {
@@ -70,6 +73,7 @@ export function prepareAgentEnv(cwd: string = workspaceRoot()): AgentRunEnv {
     env.FEISHU_BRIDGE_LARK_CLI = larkCli.commandPath;
   }
   env.FEISHU_BRIDGE = '1';
+  if (larkCliProfile) env.LARKSUITE_CLI_PROFILE = larkCliProfile;
   return { env, larkCli };
 }
 

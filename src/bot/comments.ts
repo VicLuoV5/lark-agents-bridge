@@ -5,6 +5,7 @@ import { log } from '../core/logger';
 import type { SessionStore } from '../session/store';
 import type { WorkspaceStore } from '../workspace/store';
 import { addCommentReaction, removeCommentReaction } from './reaction';
+import { accountScope } from '../config/schema';
 
 export interface CommentDeps {
   channel: LarkChannel;
@@ -12,6 +13,8 @@ export interface CommentDeps {
   agent: AgentAdapter;
   sessions: SessionStore;
   workspaces: WorkspaceStore;
+  appId: string;
+  larkCliProfile?: string;
 }
 
 // File types supported by drive.v1.fileComment.get; other types (slides,
@@ -110,7 +113,7 @@ export async function handleCommentMention(deps: CommentDeps): Promise<void> {
   // doc continue the same conversation. cwd defaults to $HOME — the agent
   // probably won't do filesystem work for doc replies but we keep a sane
   // default in case it does.
-  const synthChatId = `doc:${evt.fileToken}`;
+  const synthChatId = accountScope(deps.appId, `doc:${evt.fileToken}`);
   const cwd = workspaces.cwdFor(synthChatId) ?? homedir();
   const resumeFrom = sessions.resumeFor(synthChatId, cwd, agent.id);
   log.info('comment', 'session', { synthChatId, resumeFrom: resumeFrom ?? null, cwd });
@@ -124,7 +127,7 @@ export async function handleCommentMention(deps: CommentDeps): Promise<void> {
     : false;
 
   try {
-    const run = agent.run({ prompt, sessionId: resumeFrom, cwd });
+    const run = agent.run({ prompt, sessionId: resumeFrom, cwd, larkCliProfile: deps.larkCliProfile });
     let answer = '';
     let errorMsg: string | undefined;
     let terminal = false;

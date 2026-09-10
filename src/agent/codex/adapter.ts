@@ -57,7 +57,7 @@ export class CodexAdapter implements AgentAdapter {
 
   private spawnRun(opts: AgentRunOptions): AgentRun {
     const cwd = opts.cwd ?? workspaceRoot();
-    const { env, larkCli } = prepareAgentEnv(cwd);
+    const { env, larkCli } = prepareAgentEnv(cwd, opts.larkCliProfile);
     const args = buildArgs(opts, larkCli ? [larkCli.toolsDir] : []);
     const child = spawnAgentCommand(this.binary, args, {
       cwd,
@@ -75,6 +75,7 @@ export class CodexAdapter implements AgentAdapter {
       reasoningEffort: opts.reasoningEffort,
       binary: this.binary,
       larkCli: larkCli?.commandPath,
+      larkCliProfile: opts.larkCliProfile,
     });
 
     const stderrChunks: Buffer[] = [];

@@ -2,6 +2,46 @@ import { registerApp } from '@larksuiteoapi/node-sdk';
 import qrcode from 'qrcode-terminal';
 import type { AppConfig, TenantBrand } from '../config/schema';
 
+export interface RegistrationChatUpdate {
+  kind: 'qr';
+  url: string;
+  expireMinutes: number;
+}
+
+export interface RegistrationResult {
+  clientId: string;
+  clientSecret: string;
+  tenant: TenantBrand;
+  /** open_id of the scanning user, under the newly created app. */
+  operatorOpenId?: string;
+}
+
+/**
+ * App registration driven from a chat instead of the terminal: QR/URL is
+ * delivered through `notify` (the bridge sends it to the conversation) and
+ * the caller awaits resolution. The user only completes the login/scan on
+ * the Feishu side — no manual credential entry.
+ */
+export async function registerAppViaChat(
+  notify: (update: RegistrationChatUpdate) => Promise<void>,
+): Promise<RegistrationResult> {
+  const result = await registerApp({
+    onQRCodeReady: (info) => {
+      void notify({
+        kind: 'qr',
+        url: info.url,
+        expireMinutes: Math.max(1, Math.round(info.expireIn / 60)),
+      }).catch(() => {});
+    },
+  });
+  return {
+    clientId: result.client_id,
+    clientSecret: result.client_secret,
+    tenant: result.user_info?.tenant_brand ?? 'feishu',
+    operatorOpenId: result.user_info?.open_id,
+  };
+}
+
 export async function runRegistrationWizard(): Promise<AppConfig> {
   console.log('\n未检测到飞书应用配置，进入扫码创建向导。\n');
 

@@ -73,7 +73,7 @@ export function runStreamJsonAgent(spec: StreamJsonAgentSpec, opts: AgentRunOpti
 
 function buildStreamJsonRun(spec: StreamJsonAgentSpec, opts: AgentRunOptions): AgentRun {
   const cwd = opts.cwd ?? workspaceRoot();
-  const { env, larkCli } = prepareAgentEnv(cwd);
+  const { env, larkCli } = prepareAgentEnv(cwd, opts.larkCliProfile);
   if (spec.extraEnv) Object.assign(env, spec.extraEnv);
   const composedPrompt = buildBridgePrompt(opts.prompt, { larkCli });
   if (spec.promptViaArgv && composedPrompt.length > (spec.maxArgvPromptChars ?? Infinity)) {
@@ -107,6 +107,7 @@ function buildStreamJsonRun(spec: StreamJsonAgentSpec, opts: AgentRunOptions): A
     permissionMode: opts.permissionMode,
     binary: spec.binary,
     larkCli: larkCli?.commandPath,
+    larkCliProfile: opts.larkCliProfile,
     ...spec.logFields,
   });
 

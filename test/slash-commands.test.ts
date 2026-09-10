@@ -5,6 +5,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { ActiveRuns } from '../src/bot/active-runs';
 import { tryHandleCommand, type CommandContext } from '../src/commands';
 import type { AppConfig } from '../src/config/schema';
+import { accountScope } from '../src/config/schema';
 import { SessionStore } from '../src/session/store';
 import { WorkspaceStore } from '../src/workspace/store';
 
@@ -79,7 +80,7 @@ describe('slash commands', () => {
       }),
       params: { user_id_type: 'open_id' },
     });
-    expect(workspaces.cwdFor('oc_new_chat')).toBe('D:\\Works\\MetaPulse\\Codexwork');
+    expect(workspaces.cwdFor(accountScope('cli_test', 'oc_new_chat'))).toBe('D:\\Works\\MetaPulse\\Codexwork');
     expect(sessions.getRaw(ctx.scope)?.sessionId).toBe('thread-1');
     expect(send).toHaveBeenCalledWith(
       'oc_new_chat',
@@ -103,6 +104,27 @@ describe('slash commands', () => {
     expect(send).toHaveBeenCalledWith(
       'oc_source_chat',
       expect.objectContaining({ markdown: '已开始新会话。' }),
+      { replyTo: 'om_msg' },
+    );
+  });
+
+  it('denies sensitive commands until a manual account handoff is claimed', async () => {
+    const { ctx, send } = await makeContext('/account');
+    ctx.controls.cfg = {
+      accounts: {
+        app: { id: 'cli_manual', secret: 'secret', tenant: 'feishu' },
+      },
+      preferences: {
+        access: {},
+        pendingAdminHandoff: { digest: 'pending' },
+      },
+    };
+
+    await expect(tryHandleCommand(ctx)).resolves.toBe(true);
+
+    expect(send).toHaveBeenCalledWith(
+      'oc_source_chat',
+      expect.objectContaining({ markdown: '❌ 此命令仅管理员可用。' }),
       { replyTo: 'om_msg' },
     );
   });

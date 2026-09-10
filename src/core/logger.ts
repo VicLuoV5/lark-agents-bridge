@@ -69,7 +69,18 @@ function getStream(): WriteStream | null {
   }
   try {
     mkdirSync(logsDir(), { recursive: true });
-    stream = createWriteStream(join(logsDir(), `${today}.log`), { flags: 'a' });
+    const next = createWriteStream(join(logsDir(), `${today}.log`), { flags: 'a' });
+    // createWriteStream can report permission / sharing failures after this
+    // function returns. Without an error listener Node treats that as an
+    // unhandled stream error and can crash an otherwise healthy bridge (or a
+    // test process using a read-only home directory).
+    next.on('error', () => {
+      if (stream === next) {
+        stream = null;
+        currentDate = '';
+      }
+    });
+    stream = next;
     currentDate = today;
     return stream;
   } catch {

@@ -152,7 +152,7 @@ export class DshAdapter implements AgentAdapter {
       const cwd = opts.cwd ?? workspaceRoot();
       await this.ensureProvisioned();
       const conn = this.getConnection();
-      const { env, larkCli } = prepareAgentEnv(cwd);
+      const { env, larkCli } = prepareAgentEnv(cwd, opts.larkCliProfile);
       this.currentEnv = env;
       await conn.start();
 
@@ -281,7 +281,7 @@ export class DshAdapter implements AgentAdapter {
     const { env } = prepareAgentEnv(cwd);
     const child = this.spawnDsh([...ACP_PROFILE_ARGS], {
       cwd,
-      env,
+      env: this.currentEnv ?? env,
       stdio: ['pipe', 'pipe', 'pipe'],
     });
     return {

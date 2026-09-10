@@ -42,6 +42,15 @@ bridge 会 spawn 一个本地 agent CLI，由 `config.json` 里的 `preferences.
 
 `dsh` adapter 把 DeepSeek Harness 跑成一个所有聊天共享的常驻 ACP 子进程（进程重启后经 `session/resume` 恢复会话），首次使用时自动安装 acp profile，并按 `/config` 的文件权限档位控制审批回调。注意：回复按消息粒度到达（无逐 token 流），且 dsh 的 Windows 沙箱只有部分强制力——把它当实验性能力看待。版本要配对：acp 插件和 launcher 必须同一代，建议 launcher 直接装 next 通道（`npm i -g @deepseek-ai/dsh@next`），版本错配会在 profile 加载时报错。
 
+## 多账号
+
+同一个本机 agent 登录态要服务多个飞书 / Lark Bot 应用？每个应用在一次性录入后保存为档案，切换直接在聊天里完成；当前版本一次只运行一个 Bot，不会把同一应用启动为两个 bridge 进程：
+
+- `/account add` → **扫码创建新应用**（推荐）：桥会把注册链接发到聊天里，用目标账号的飞书打开、登录、确认——应用自动创建并录入档案。也可选 **绑定已有应用**，填入它的 App ID 和 Secret。
+- `/account` → 列出所有已存档案，下拉选择切换。切换时会先校验凭据并连接新 Bot，确认成功后才关闭旧 Bot；原卡片会明确显示“切换完成”或“切换失败”。目标档案已有管理员时，新 Bot 还会向管理员发送上线接管通知。
+
+Secret 按应用分别保存在本机加密 keystore（`secrets.enc`）。管理员 open_id、聊天 session、工作空间和 agent 可调用的 `lark-cli` Profile 都按应用隔离。扫码录入会保存该应用的管理员；手动绑定的应用切换后会在旧 bot 的成功卡片显示一次性交接码，指定操作者必须私聊新 bot 发送 `/claim <交接码>` 才能取得管理员权限。如果新 Bot 无法连接，旧 Bot 会继续在线，并自动恢复切换前的落盘配置。
+
 ## 前置条件
 
 - Node.js 20 或更新版本。
@@ -49,7 +58,7 @@ bridge 会 spawn 一个本地 agent CLI，由 `config.json` 里的 `preferences.
 - 一个飞书 / Lark PersonalAgent 应用。
 - 能访问 OpenAI/Codex 以及飞书 / Lark 开放平台网络。
 
-首次运行可以通过二维码向导创建或绑定应用。`lark-cli` 不是普通聊天的硬依赖，但建议安装；agent 需要操作飞书文档、消息、日历等 API 时会用到它。
+首次运行可以通过二维码向导创建或绑定应用。`lark-cli` 不是普通聊天的硬依赖，但建议安装；agent 需要操作飞书文档、消息、日历等 API 时会用到它。bridge 会为每个已激活 Bot 自动维护独立 Profile，并只把当前 Profile 传给 agent；不要把 `lark-cli config bind` 当作账号切换步骤。
 
 Windows 上如果用户名包含中文或空格，Codex 沙箱可能无法稳定解析全局 npm 路径。bridge 会在工作区根目录生成 `.feishu-codex-bridge-tools/` 作为运行时 shim，并根据全局 `@larksuite/cli` 的版本和二进制元数据自动同步。
 
@@ -103,6 +112,7 @@ Reply exactly OK
 - `im:message`
 - `im:message:send_as_bot`
 - `im:resource`
+- `cardkit:card:write`，流式卡片回复需要
 - `im:chat`，`/new` 创建群需要
 - `drive:drive`，云文档评论处理需要
 
@@ -163,7 +173,8 @@ lark-agents-bridge unregister
 | `/exit <id\|#>` | 停止一个 bridge 进程 |
 | `/reconnect` | 强制重连飞书 / Lark WebSocket |
 | `/doctor [描述]` | 让当前 agent 根据近期 bridge 日志自助诊断 |
-| `/account` | 查看或更换应用凭据 |
+| `/account` | 管理 Bot 应用档案、录入或切换应用 |
+| `/claim <交接码>` | 在新 bot 私聊中领取手动绑定应用的管理员权限 |
 | `/help` | 帮助卡片 |
 
 私聊里普通消息都会响应。群和话题群默认只有 @ bot 才响应。
@@ -176,8 +187,8 @@ lark-agents-bridge unregister
 |---|---|
 | `~/.feishu-codex-bridge/config.json` | 应用配置和偏好 |
 | `~/.feishu-codex-bridge/secrets.enc` | 加密 App Secret |
-| `~/.feishu-codex-bridge/sessions.json` | chat/topic 到 agent session 的映射（按 agent 隔离） |
-| `~/.feishu-codex-bridge/workspaces.json` | 命名工作空间 |
+| `~/.feishu-codex-bridge/sessions.json` | chat/topic 到 agent session 的映射（按 Bot 应用和 agent 隔离） |
+| `~/.feishu-codex-bridge/workspaces.json` | 按 Bot 应用隔离的命名工作空间 |
 | `~/.feishu-codex-bridge/processes.json` | 运行中进程注册表 |
 | `~/.feishu-codex-bridge/media/<chatId>/` | 附件下载缓存 |
 | `~/.feishu-codex-bridge/logs/YYYY-MM-DD.log` | JSONL 结构化日志 |

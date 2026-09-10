@@ -4,7 +4,7 @@ import type { ActiveRuns } from '../bot/active-runs';
 import type { ChatModeCache } from '../bot/chat-mode-cache';
 import type { PendingQueue } from '../bot/pending-queue';
 import { runCommandHandler, type CommandContext, type Controls } from '../commands';
-import { isChatAllowed, isUserAllowed } from '../config/schema';
+import { accountScope, isChatAllowed, isUserAllowed } from '../config/schema';
 import { log } from '../core/logger';
 import type { SessionStore } from '../session/store';
 import type { WorkspaceStore } from '../workspace/store';
@@ -55,7 +55,9 @@ export async function handleCardAction(deps: CardDispatchDeps): Promise<void> {
   // session — look up the carrier message (the card lives on it) once.
   // Done before the access check so we know the chat mode (p2p vs group)
   // and can skip the chat allowlist for DMs.
-  const { scope, threadId, mode } = await resolveScope(deps);
+  const resolved = await resolveScope(deps);
+  const { threadId, mode } = resolved;
+  const scope = accountScope(deps.controls.cfg.accounts.app.id, resolved.scope);
 
   // Access control. Operator must be on the same allowlists as message
   // senders. Silent drop — sending a denial card to an unauthorized user

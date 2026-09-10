@@ -1,9 +1,15 @@
 import type {
+  CardActionEvent,
   LarkChannel,
   LarkChannelOptions,
   NormalizedMessage,
 } from '@larksuiteoapi/node-sdk';
-import { Domain, LoggerLevel, createLarkChannel } from '@larksuiteoapi/node-sdk';
+import {
+  Domain,
+  LoggerLevel,
+  createLarkChannel,
+  normalizeCardAction,
+} from '@larksuiteoapi/node-sdk';
 import type { AgentAdapter } from '../agent/types';
 import { handleCardAction } from '../card/dispatcher';
 import { renderCard } from '../card/run-renderer';
@@ -19,6 +25,8 @@ import { renderText } from '../card/text-renderer';
 import { tryHandleCommand, type Controls } from '../commands';
 import type { AppConfig } from '../config/schema';
 import {
+  accountScope,
+  activeAccountProfile,
   getAgentModel,
   getAgentPermissionMode,
   getAgentReasoningEffort,
@@ -109,6 +117,10 @@ function stringifyArgs(args: unknown[]): string {
 
 export interface BridgeChannel {
   channel: LarkChannel;
+  /** Temporarily stop accepting new inbound work during an account handoff. */
+  drain(): void;
+  /** Resume inbound work if the replacement channel failed to connect. */
+  resume(): void;
   disconnect(): Promise<void>;
 }
 
@@ -123,6 +135,7 @@ export interface StartChannelDeps {
 export async function startChannel(deps: StartChannelDeps): Promise<BridgeChannel> {
   const { cfg, agent, sessions, workspaces, controls } = deps;
   const activeRuns = new ActiveRuns();
+  workspaces.migrateLegacyNamed(cfg.accounts.app.id);
   // ChatModeCache stays per-bridge-instance — invalidated on restart along
   // with everything else. Topic-mode chats only need one chat.get() call ever.
   const chatModeCache = new ChatModeCache();
@@ -218,9 +231,11 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
 
   // Counter for stdout reconnect escalation; reset on `reconnected`.
   let consecutiveReconnects = 0;
+  let acceptingInbound = true;
 
   channel.on({
     message: async (msg) => {
+      if (!acceptingInbound) return;
       await withTrace({ chatId: msg.chatId, msgId: msg.messageId }, () =>
         intakeMessage({
           channel,
@@ -238,8 +253,12 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
     reject: (evt) => {
       log.info('intake', 'reject', { chatId: evt.chatId, reason: evt.reason });
     },
-    cardAction: async (evt) => {
-      await withTrace({ chatId: evt.chatId, msgId: evt.messageId }, async () => {
+    cardAction: (evt) => {
+      if (!acceptingInbound) return;
+      // Feishu requires a card-action acknowledgement within a tight timeout.
+      // Account actions may need several API calls (e.g. create a managed
+      // card), so acknowledge first and perform the work independently.
+      void withTrace({ chatId: evt.chatId, msgId: evt.messageId }, async () => {
         await handleCardAction({
           channel,
           evt,
@@ -254,8 +273,17 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
       }).catch((err) => log.fail('cardAction', err));
     },
     comment: async (evt) => {
+      if (!acceptingInbound) return;
       await withTrace({ chatId: 'comment' }, async () => {
-        await handleCommentMention({ channel, evt, agent, sessions, workspaces }).catch((err) =>
+        await handleCommentMention({
+          channel,
+          evt,
+          agent,
+          sessions,
+          workspaces,
+          appId: controls.cfg.accounts.app.id,
+          larkCliProfile: activeAccountProfile(controls.cfg).larkCliProfile,
+        }).catch((err) =>
           log.fail('comment', err),
         );
       }).catch((err) => log.fail('comment', err));
@@ -295,6 +323,7 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
   });
 
   await channel.connect();
+  installCardActionAckDispatcher(channel);
 
   const identity = channel.botIdentity;
   log.info('ws', 'connected', {
@@ -321,6 +350,12 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
 
   return {
     channel,
+    drain: () => {
+      acceptingInbound = false;
+    },
+    resume: () => {
+      acceptingInbound = true;
+    },
     disconnect: async () => {
       keepalive.stop();
       pending.cancelAll();
@@ -329,6 +364,63 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
       await Promise.allSettled([sessions.flush(), workspaces.flush()]);
     },
   };
+}
+
+interface CardActionChannelInternals {
+  dispatcher: {
+    register(handlers: Record<string, (raw: unknown) => unknown>): void;
+  };
+  safety: {
+    pushAction(
+      eventId: string,
+      queueScope: string,
+      handler: () => Promise<void>,
+    ): Promise<void>;
+  };
+  handlers: {
+    cardAction?: (evt: CardActionEvent) => void | Promise<void>;
+  };
+}
+
+/**
+ * SDK 1.65's built-in LarkChannel adapter awaits card work and drops its
+ * return value. Feishu then receives a code-only WS acknowledgement and the
+ * desktop client reports 200530 even though the action itself succeeded.
+ * Replace only that dispatcher entry: return a valid ACK immediately while
+ * preserving the SDK's action deduplication/locking pipeline.
+ */
+export function installCardActionAckDispatcher(channel: LarkChannel): void {
+  const internals = channel as unknown as CardActionChannelInternals;
+  internals.dispatcher.register({
+    'card.action.trigger': (raw) => {
+      const evt = normalizeCardAction(
+        raw as Parameters<typeof normalizeCardAction>[0],
+        { includeRaw: true },
+      );
+      if (!evt) return {};
+
+      const serialized =
+        typeof evt.action.value === 'string'
+          ? evt.action.value
+          : JSON.stringify(evt.action.value ?? '');
+      const actionId = [
+        evt.action.tag,
+        evt.action.name ?? '',
+        evt.action.option ?? '',
+        serialized.slice(0, 128),
+      ].join('|');
+      void internals.safety
+        .pushAction(
+          `card:${evt.messageId}:${evt.operator.openId}:${actionId}`,
+          evt.chatId,
+          async () => {
+            await internals.handlers.cardAction?.(evt);
+          },
+        )
+        .catch((err) => log.fail('cardAction', err, { step: 'safety-dispatch' }));
+      return {};
+    },
+  });
 }
 
 interface IntakeDeps {
@@ -359,9 +451,10 @@ async function intakeMessage(deps: IntakeDeps): Promise<void> {
   // Resolve scope (and underlying chat mode) once at intake — every
   // downstream consumer keys off these.
   const chatMode = await chatModeCache.resolve(channel, msg.chatId);
-  const scope = chatMode === 'topic' && msg.threadId
+  const rawScope = chatMode === 'topic' && msg.threadId
     ? `${msg.chatId}:${msg.threadId}`
     : msg.chatId;
+  const scope = accountScope(controls.cfg.accounts.app.id, rawScope);
   log.info('intake', 'enter', {
     scope,
     chatType: msg.chatType,
@@ -393,6 +486,12 @@ async function intakeMessage(deps: IntakeDeps): Promise<void> {
     });
     return;
   }
+
+  // A legacy single-app install has unprefixed state. Move it only when the
+  // original active application receives its first event; another app can
+  // never inherit that conversation or workspace state.
+  sessions.migrateKey(rawScope, scope);
+  workspaces.migrateChatKey(rawScope, scope);
 
   // Group-mention policy. p2p is always unrestricted; in groups (regular and
   // topic) we drop messages that don't @bot when the user has opted into the
@@ -521,6 +620,7 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
     permissionMode: getAgentPermissionMode(controls.cfg),
     reasoningEffort: getAgentReasoningEffort(controls.cfg),
     stopGraceMs: getAgentStopGraceMs(controls.cfg),
+    larkCliProfile: activeAccountProfile(controls.cfg).larkCliProfile,
   });
   const handle = activeRuns.register(scope, run);
 

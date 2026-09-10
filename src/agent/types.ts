@@ -30,6 +30,8 @@ export interface AgentRunOptions {
    * are adapter-specific.
    */
   stopGraceMs?: number;
+  /** lark-cli profile for the receiving bot account, inherited by agent tools. */
+  larkCliProfile?: string;
 }
 
 export interface AgentRun {

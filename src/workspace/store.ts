@@ -5,7 +5,9 @@ import { log } from '../core/logger';
 
 interface WorkspaceData {
   chats: Record<string, { cwd: string }>;
+  /** Legacy global named workspaces, retained for migration/readback. */
   named: Record<string, string>;
+  namedByAccount?: Record<string, Record<string, string>>;
 }
 
 export class WorkspaceStore {
@@ -24,6 +26,7 @@ export class WorkspaceStore {
       this.data = {
         chats: parsed.chats ?? {},
         named: parsed.named ?? {},
+        namedByAccount: parsed.namedByAccount ?? {},
       };
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code === 'ENOENT') return;
@@ -40,22 +43,48 @@ export class WorkspaceStore {
     this.schedulePersist();
   }
 
-  listNamed(): Record<string, string> {
-    return { ...this.data.named };
-  }
-
-  getNamed(name: string): string | undefined {
-    return this.data.named[name];
-  }
-
-  saveNamed(name: string, cwd: string): void {
-    this.data.named[name] = cwd;
+  /** Move a legacy chat key into its account namespace once, without loss. */
+  migrateChatKey(legacyKey: string, scopedKey: string): void {
+    if (legacyKey === scopedKey || this.data.chats[scopedKey] || !this.data.chats[legacyKey]) return;
+    this.data.chats[scopedKey] = this.data.chats[legacyKey]!;
+    delete this.data.chats[legacyKey];
     this.schedulePersist();
   }
 
-  removeNamed(name: string): boolean {
-    if (!(name in this.data.named)) return false;
-    delete this.data.named[name];
+  /** Assign pre-multi-account named workspaces to the formerly active app. */
+  migrateLegacyNamed(accountId: string): void {
+    if (Object.keys(this.data.named).length === 0 || this.data.namedByAccount?.[accountId]) return;
+    this.data.namedByAccount ??= {};
+    this.data.namedByAccount[accountId] = { ...this.data.named };
+    this.data.named = {};
+    this.schedulePersist();
+  }
+
+  listNamed(accountId?: string): Record<string, string> {
+    if (!accountId) return { ...this.data.named };
+    return { ...(this.data.namedByAccount?.[accountId] ?? {}) };
+  }
+
+  getNamed(name: string, accountId?: string): string | undefined {
+    if (!accountId) return this.data.named[name];
+    return this.data.namedByAccount?.[accountId]?.[name];
+  }
+
+  saveNamed(name: string, cwd: string, accountId?: string): void {
+    if (!accountId) {
+      this.data.named[name] = cwd;
+    } else {
+      this.data.namedByAccount ??= {};
+      const scoped = (this.data.namedByAccount[accountId] ??= {});
+      scoped[name] = cwd;
+    }
+    this.schedulePersist();
+  }
+
+  removeNamed(name: string, accountId?: string): boolean {
+    const target = accountId ? this.data.namedByAccount?.[accountId] : this.data.named;
+    if (!target || !(name in target)) return false;
+    delete target[name];
     this.schedulePersist();
     return true;
   }

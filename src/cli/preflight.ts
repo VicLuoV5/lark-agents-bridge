@@ -3,7 +3,6 @@ import * as p from '@clack/prompts';
 import { withWindowsNpmGlobalBin } from '../runtime/path-env';
 
 const INSTALL_TIMEOUT_MS = 5 * 60 * 1000;
-const BIND_TIMEOUT_MS = 30 * 1000;
 
 const BOLD = '\x1b[1m';
 const RESET = '\x1b[0m';
@@ -11,13 +10,13 @@ const RESET = '\x1b[0m';
 const MANUAL_INSTALL_HINT = [
   '手动安装命令:',
   `  ${BOLD}npm install -g @larksuite/cli${RESET}`,
-  `  ${BOLD}lark-cli config bind --source feishu-codex-bridge --identity bot-only${RESET}`,
+  'Bridge 会在下次启动时为当前 Bot 自动创建独立的 lark-cli Profile。',
   '',
   '完整文档: https://github.com/larksuite/cli',
 ].join('\n');
 
 export interface PreFlightOptions {
-  /** Skip lark-cli auto-install + bind. */
+  /** Skip lark-cli auto-install check. */
   skipCheckLarkCli?: boolean;
   // Future: skipCheckXxx?: boolean;
 }
@@ -73,27 +72,7 @@ async function checkLarkCli(opts: PreFlightOptions): Promise<void> {
   }
   sInstall.stop('Installed');
 
-  // Step 2: bind
-  const sBind = p.spinner();
-  sBind.start('Binding to bridge credentials');
-  const bindResult = await runCapture(
-    'lark-cli',
-    ['config', 'bind', '--source', 'feishu-codex-bridge', '--identity', 'bot-only'],
-    BIND_TIMEOUT_MS,
-  );
-  if (!bindResult.success) {
-    sBind.error('Bind failed');
-    if (bindResult.output.trim()) {
-      console.log(bindResult.output);
-    }
-    p.outro('lark-cli 已装,但自动 bind 失败');
-    console.log(
-      `请手动执行:\n  ${BOLD}lark-cli config bind --source feishu-codex-bridge --identity bot-only${RESET}\n`,
-    );
-    return;
-  }
-  sBind.stop('Bound');
-  p.outro('Done');
+  p.outro('Installed. Bridge will provision the current Bot profile on startup.');
 }
 
 function printInstallFailedWarning(): void {
@@ -110,10 +89,10 @@ function printInstallFailedWarning(): void {
       '请手动执行:',
       '',
       `  ${BOLD}npm install -g @larksuite/cli${RESET}`,
-      `  ${BOLD}lark-cli config bind --source feishu-codex-bridge --identity bot-only${RESET}`,
+      'Bridge 会在下次启动时为当前 Bot 自动创建独立的 lark-cli Profile。',
       '',
       '完整文档: https://github.com/larksuite/cli',
-      '装完之后无需重启 bridge(它只在启动时检测一次)。',
+      '安装后请重启 bridge，让它为当前 Bot 创建独立 Profile。',
       '',
     ].join('\n'),
   );
@@ -141,7 +120,7 @@ interface RunResult {
 /**
  * Run a child process, capture stdout/stderr to a buffer (keeps the
  * surrounding clack spinner UI clean), enforce a timeout. Used for the
- * npm install and lark-cli bind steps in the preflight check.
+ * npm install step in the preflight check.
  */
 async function runCapture(
   cmd: string,

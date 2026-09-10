@@ -1,11 +1,12 @@
+import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
+
 export type TenantBrand = 'feishu' | 'lark';
 
 /**
  * SecretRef points at a secret stored outside this file — keeps secrets out
  * of `config.json` so backups / accidental git commits / log dumps don't
- * leak the bot's App Secret. Mirrors openclaw / lark-cli's `SecretRef`
- * shape so lark-cli's `--source feishu-codex-bridge` reads it through the same
- * generic `ResolveSecretInput` pipeline as openclaw.
+ * leak the bot's App Secret. Mirrors openclaw's `SecretRef` shape so one
+ * generic resolver can serve bridge and agent-provider credentials.
  *
  *   - `env`:  value is in process env at `id` (optionally allowlisted via provider)
  *   - `file`: value is at the path `id` (or `provider.path` if provider config)
@@ -147,6 +148,11 @@ export interface AppPreferences {
   /** Reply rendering mode for IM (group/p2p) messages. Default 'card'. */
   messageReply?: MessageReplyMode;
   /**
+   * One-time handoff for a manually-bound account. The plaintext code is
+   * shown only on the old bot's success card; config stores just its digest.
+   */
+  pendingAdminHandoff?: { digest: string };
+  /**
    * Internal marker: pre-0.1.27 the value `'text'` meant "lightweight
    * streaming markdown card" (what's now called `'markdown'`). On upgrade
    * we'd silently switch those users to true plain-text behavior unless we
@@ -229,9 +235,29 @@ export interface AppPreferences {
  * holds user-tunable behavior knobs. Other future sections (mcp, etc.)
  * belong at this top level alongside them.
  */
+/**
+ * A saved Feishu app account for in-chat switching. Secrets are NOT stored
+ * here — they live in the keystore under `secretKeyForApp(appId)`; a
+ * profile only carries metadata.
+ */
+export interface AccountProfile {
+  /** Display name — the app's name as reported by the Feishu API. */
+  name: string;
+  appId: string;
+  tenant: TenantBrand;
+  /** Stable lark-cli profile selected for agent-originated API calls. */
+  larkCliProfile?: string;
+  /** Access rules are app-scoped because Feishu open_ids are app-scoped. */
+  access?: AppAccess;
+  /** @deprecated Legacy QR enrollment seed; migrated to access.admins. */
+  adminOpenId?: string;
+}
+
 export interface AppConfig {
   accounts: {
     app: AppCredentials;
+    /** Metadata for every known account, including the currently active one. */
+    profiles?: AccountProfile[];
   };
   secrets?: SecretsConfig;
   preferences?: AppPreferences;
@@ -257,6 +283,176 @@ export function isSecretRef(s: SecretInput): s is SecretRef {
  * similar `appsecret:` convention so audit/grep is consistent. */
 export function secretKeyForApp(appId: string): string {
   return `app-${appId}`;
+}
+
+/** Saved account profiles (empty for configs created before multi-account). */
+export function getAccountProfiles(cfg: Partial<AppConfig>): AccountProfile[] {
+  const profiles = cfg.accounts?.profiles;
+  return Array.isArray(profiles) ? profiles : [];
+}
+
+/** A deterministic, shell-safe lark-cli profile name for an app. */
+export function larkCliProfileName(appId: string): string {
+  return `bridge-${appId}`;
+}
+
+/** Namespace all per-chat state by the receiving app. */
+export function accountScope(appId: string, scope: string): string {
+  return `app:${appId}:${scope}`;
+}
+
+function normalizeAccess(access: AppAccess | undefined, legacyAdmin?: string): AppAccess {
+  const uniq = (values: string[] | undefined): string[] | undefined => {
+    if (!values) return undefined;
+    return [...new Set(values.filter((v) => typeof v === 'string' && v.trim()))];
+  };
+  const admins = uniq(access?.admins) ?? (legacyAdmin ? [legacyAdmin] : undefined);
+  return {
+    ...(uniq(access?.allowedUsers) ? { allowedUsers: uniq(access?.allowedUsers) } : {}),
+    ...(uniq(access?.allowedChats) ? { allowedChats: uniq(access?.allowedChats) } : {}),
+    ...(admins ? { admins } : {}),
+  };
+}
+
+/**
+ * Upgrade the original "inactive profiles only" layout to a complete account
+ * registry. Old active-account access rules become that account's profile.
+ */
+export function ensureAccountProfiles(cfg: AppConfig): boolean {
+  const current = cfg.accounts.app;
+  const source = getAccountProfiles(cfg);
+  let changed = false;
+  const profiles: AccountProfile[] = [];
+  const seen = new Set<string>();
+  for (const raw of source) {
+    if (!raw?.appId || seen.has(raw.appId)) {
+      changed = true;
+      continue;
+    }
+    seen.add(raw.appId);
+    const access = normalizeAccess(raw.access, raw.adminOpenId);
+    const normalized: AccountProfile = {
+      name: raw.name || raw.appId,
+      appId: raw.appId,
+      tenant: raw.tenant,
+      larkCliProfile: raw.larkCliProfile ?? larkCliProfileName(raw.appId),
+      ...(Object.keys(access).length > 0 ? { access } : {}),
+    };
+    if (JSON.stringify(normalized) !== JSON.stringify(raw)) changed = true;
+    profiles.push(normalized);
+  }
+  if (!seen.has(current.id)) {
+    profiles.push({
+      name: current.id,
+      appId: current.id,
+      tenant: current.tenant,
+      larkCliProfile: larkCliProfileName(current.id),
+      access: normalizeAccess(cfg.preferences?.access),
+    });
+    changed = true;
+  }
+  if (changed) cfg.accounts.profiles = profiles;
+  return changed;
+}
+
+export function activeAccountProfile(cfg: AppConfig): AccountProfile {
+  ensureAccountProfiles(cfg);
+  const profile = getAccountProfiles(cfg).find((p) => p.appId === cfg.accounts.app.id);
+  if (!profile) throw new Error(`active account profile missing for ${cfg.accounts.app.id}`);
+  return profile;
+}
+
+export function switchableAccountProfiles(cfg: AppConfig): AccountProfile[] {
+  ensureAccountProfiles(cfg);
+  return getAccountProfiles(cfg).filter((p) => p.appId !== cfg.accounts.app.id);
+}
+
+/**
+ * Add or update a profile (dedupe by appId; re-enrollment refreshes its
+ * metadata and app-scoped access rules).
+ */
+export function upsertAccountProfile(cfg: AppConfig, profile: AccountProfile): void {
+  ensureAccountProfiles(cfg);
+  const profiles = getAccountProfiles(cfg).filter((p) => p.appId !== profile.appId);
+  const access = normalizeAccess(profile.access, profile.adminOpenId);
+  profiles.push({
+    ...profile,
+    name: profile.name || profile.appId,
+    larkCliProfile: profile.larkCliProfile ?? larkCliProfileName(profile.appId),
+    ...(Object.keys(access).length > 0 ? { access } : {}),
+    adminOpenId: undefined,
+  });
+  cfg.accounts.profiles = profiles;
+}
+
+/**
+ * Switch the active app to a saved profile. Every account remains in the
+ * registry; its access rules are copied into the active runtime preferences.
+ * A manually-bound profile without an admin gets a one-time handoff code.
+ */
+export function switchActiveAccount(
+  cfg: AppConfig,
+  target: AccountProfile,
+  opts: { outgoingName?: string } = {},
+): { handoffCode?: string } {
+  const current = cfg.accounts.app;
+  ensureAccountProfiles(cfg);
+  if (current.id === target.appId) return {};
+  const profiles = getAccountProfiles(cfg);
+  const currentProfile = profiles.find((p) => p.appId === current.id);
+  if (currentProfile) {
+    currentProfile.name = opts.outgoingName ?? currentProfile.name ?? current.id;
+    currentProfile.access = normalizeAccess(cfg.preferences?.access);
+  }
+  const targetProfile = profiles.find((p) => p.appId === target.appId);
+  if (!targetProfile) throw new Error(`account profile not found: ${target.appId}`);
+  cfg.accounts.app = {
+    id: target.appId,
+    secret: { source: 'exec', provider: 'bridge', id: secretKeyForApp(target.appId) },
+    tenant: target.tenant,
+  };
+  const targetAccess = normalizeAccess(targetProfile.access, target.adminOpenId);
+  const hasAdmin = Boolean(targetAccess.admins && targetAccess.admins.length > 0);
+  let handoffCode: string | undefined;
+  if (!hasAdmin) {
+    handoffCode = createAdminHandoffCode();
+  }
+  cfg.preferences = {
+    ...cfg.preferences,
+    access: targetAccess,
+    ...(handoffCode
+      ? { pendingAdminHandoff: { digest: handoffDigest(handoffCode) } }
+      : { pendingAdminHandoff: undefined }),
+  };
+  return handoffCode ? { handoffCode } : {};
+}
+
+function createAdminHandoffCode(): string {
+  // 80 bits of entropy. The displayed form is short enough to type, but is
+  // still infeasible to guess before the old bot's success card disappears.
+  return randomBytes(10).toString('hex').toUpperCase();
+}
+
+function handoffDigest(code: string): string {
+  return createHash('sha256').update(code).digest('hex');
+}
+
+export function claimPendingAdminHandoff(cfg: AppConfig, code: string, senderId: string): boolean {
+  const pending = cfg.preferences?.pendingAdminHandoff;
+  if (!pending) return false;
+  const supplied = Buffer.from(handoffDigest(code.trim().toUpperCase()), 'utf8');
+  const expected = Buffer.from(pending.digest, 'utf8');
+  if (supplied.length !== expected.length || !timingSafeEqual(supplied, expected)) return false;
+  const profile = activeAccountProfile(cfg);
+  const access = normalizeAccess(profile.access);
+  access.admins = [senderId];
+  profile.access = access;
+  cfg.preferences = {
+    ...cfg.preferences,
+    access,
+    pendingAdminHandoff: undefined,
+  };
+  return true;
 }
 
 /**
@@ -336,6 +532,10 @@ export function isChatAllowed(cfg: AppConfig, chatId: string): boolean {
 /** True when `senderId` has admin privileges. Empty list = no admin
  * restriction (every allowed user can run admin commands). */
 export function isAdmin(cfg: AppConfig, senderId: string): boolean {
+  // A manually bound app has no trusted app-scoped open_id until its
+  // one-time handoff is claimed. Treat that transitional state as deny-all
+  // for sensitive commands; `/claim` itself is intentionally not admin-gated.
+  if (cfg.preferences?.pendingAdminHandoff) return false;
   const list = cfg.preferences?.access?.admins;
   if (!list || list.length === 0) return true;
   return list.includes(senderId);

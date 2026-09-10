@@ -42,6 +42,15 @@ Every adapter injects the same bridge conventions and the local `lark-cli` shim,
 
 The `dsh` adapter runs DeepSeek Harness as one long-lived ACP subprocess shared by all chats (sessions survive process restarts via `session/resume`), auto-installs its `acp` profile on first use, and enforces the `/config` file-permission vocabulary through its approval callbacks. Notes: replies arrive per message (no token streaming), and dsh's Windows sandbox is only partially enforced — treat it as experimental. Version pairing matters: the `acp` profile plugin must match the launcher generation, so install the launcher from the `next` channel (`npm i -g @deepseek-ai/dsh@next`); mismatched versions fail at profile load.
 
+## Multiple accounts
+
+Using one local agent login for multiple Feishu / Lark bot applications? Each application is saved as a profile after a one-time enrollment, and switching is done from the chat. This release runs one active bot at a time; it does not start duplicate bridge processes for the same app:
+
+- `/account add` → **Scan to create a new app** (recommended): the bridge posts a registration link; open it with the target account's Feishu, log in, confirm — the app is created and enrolled automatically. Or choose **Bind an existing app** and paste its App ID + Secret.
+- `/account` → lists saved profiles with a dropdown to switch. Switching validates the saved credentials, connects the replacement before retiring the current bot, and changes the original card to a clear connected/failed result. When the target profile has a known admin, the new bot also sends that admin an online/takeover notice.
+
+Secrets are stored per app in the encrypted local keystore (`secrets.enc`). Admin open_ids, chat sessions, workspaces, and the agent-visible `lark-cli` profile are app-scoped. QR enrollment records that app's admin; after switching to a manually bound app, the old bot shows a one-time handoff code and the intended operator must DM the new bot with `/claim <code>` to become its admin. If the replacement cannot connect, the current bot remains online and the previous on-disk configuration is restored.
+
 ## Requirements
 
 - Node.js 20 or newer.
@@ -49,7 +58,7 @@ The `dsh` adapter runs DeepSeek Harness as one long-lived ACP subprocess shared 
 - A Feishu / Lark PersonalAgent app.
 - Network access to OpenAI/Codex and Feishu/Lark open platform endpoints.
 
-The first run can guide you through app registration by QR code. `lark-cli` is optional but recommended; the bridge uses it so agents can call Feishu/Lark APIs from local tool runs.
+The first run can guide you through app registration by QR code. `lark-cli` is optional but recommended; the bridge uses it so agents can call Feishu/Lark APIs from local tool runs. The bridge automatically maintains one named profile for the active bot and passes only that profile to the agent; do not use `lark-cli config bind` as an account-switch step.
 
 On Windows, Codex sandbox commands may not reliably resolve global npm paths when the user profile path contains non-ASCII characters or spaces. The bridge creates a workspace-local `.feishu-codex-bridge-tools/` runtime shim and keeps it synchronized from the globally installed `@larksuite/cli` version and binary metadata.
 
@@ -103,6 +112,7 @@ Required permission scopes:
 - `im:message`
 - `im:message:send_as_bot`
 - `im:resource`
+- `cardkit:card:write`, required by streaming card replies
 - `im:chat`, required by `/new`
 - `drive:drive`, required for cloud-doc comment handling
 
@@ -163,7 +173,8 @@ Do not start two bridge processes for the same Feishu/Lark app. Open-platform lo
 | `/exit <id\|#>` | Stop one bridge process |
 | `/reconnect` | Force a Feishu/Lark WebSocket reconnect |
 | `/doctor [description]` | Ask the active agent to diagnose recent bridge logs |
-| `/account` | View or rotate app credentials |
+| `/account` | Manage bot application profiles, enrollment, and switching |
+| `/claim <code>` | Claim admin access in a DM with a newly switched, manually bound bot |
 | `/help` | Show the help card |
 
 In DMs, the bot responds to normal messages. In groups and topic groups, the default is to respond only when the bot is mentioned.
@@ -176,8 +187,8 @@ Local state lives outside the repository:
 |---|---|
 | `~/.feishu-codex-bridge/config.json` | App config and preferences |
 | `~/.feishu-codex-bridge/secrets.enc` | Encrypted App Secret store |
-| `~/.feishu-codex-bridge/sessions.json` | Chat/topic to Codex session mapping |
-| `~/.feishu-codex-bridge/workspaces.json` | Named workspaces |
+| `~/.feishu-codex-bridge/sessions.json` | Chat/topic to agent session mapping, isolated by bot application |
+| `~/.feishu-codex-bridge/workspaces.json` | Named workspaces isolated by bot application |
 | `~/.feishu-codex-bridge/processes.json` | Live process registry |
 | `~/.feishu-codex-bridge/media/<chatId>/` | Downloaded attachment cache |
 | `~/.feishu-codex-bridge/logs/YYYY-MM-DD.log` | Structured JSONL logs |
